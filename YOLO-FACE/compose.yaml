@@ -1,0 +1,36 @@
+services:
+  face-tracker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - MODEL_PATH=/app/yolov12n-face.pt
+      # Video source options (choose one):
+      # - VIDEO_SOURCE=0  # USB webcam (device 0)
+      # - VIDEO_SOURCE=1  # Alternative USB webcam
+      - VIDEO_SOURCE=/videos/people2.mkv  # Local video file
+      # - VIDEO_SOURCE=rtsp://192.168.1.100:554/stream  # Direct RTSP stream
+      # For HLS/HTTP streams that need conversion, use DETECT_STREAM_URL instead:
+      # - DETECT_STREAM_URL=https://example.com/stream.m3u8
+      - SKIP_FRAMES=1
+      - SD_ENABLED=1
+      - SD_PROMPT="Cartoon style portrait, people sitting at a table, vibrant colors, detailed background"
+    # Uncomment for webcam access:
+    # devices:
+    #   - /dev/video0:/dev/video0
+    # Uncomment to mount local video files:
+    volumes:
+      - ./:/app
+      - ~/gb10/videos:/videos
+      - ~/gb10/models/comfyui:/app/models
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped

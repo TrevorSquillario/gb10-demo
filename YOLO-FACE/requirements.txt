@@ -1,0 +1,15 @@
+flask==3.0.0
+ultralytics>=8.0.0
+opencv-python-headless==4.8.1.78
+numpy>=1.24.0
+deepface>=0.0.93
+tf-keras>=2.18.0  # required by deepface with TF 2.x
+tensorrt
+polygraphy
+numpy
+tqdm
+matplotlib
+diffusers
+transformers 
+accelerate 
+controlnet-aux
