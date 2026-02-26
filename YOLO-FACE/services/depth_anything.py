@@ -91,13 +91,15 @@ def _depth_worker(
 
                 fps_text = f"FPS: {fps_display}"
                 fps_font = cv2.FONT_HERSHEY_SIMPLEX
-                fps_scale, fps_thickness = 0.5, 1
+                fps_scale, fps_thickness = 1.0, 2
                 (tw, th), bl = cv2.getTextSize(fps_text, fps_font, fps_scale, fps_thickness)
+                h_frame, w_frame = depth_frame.shape[:2]
+                fx = w_frame - tw - 15
                 cv2.rectangle(
-                    depth_frame, (10 - 5, 25 - th - 5), (10 + tw + 5, 25 + bl), (255, 255, 255), -1
+                    depth_frame, (fx - 5, 25 - th - 5), (fx + tw + 5, 25 + bl), (255, 255, 255), -1
                 )
                 cv2.putText(
-                    depth_frame, fps_text, (10, 25), fps_font, fps_scale,
+                    depth_frame, fps_text, (fx, 25), fps_font, fps_scale,
                     (104, 31, 17), fps_thickness, cv2.LINE_AA,
                 )
 

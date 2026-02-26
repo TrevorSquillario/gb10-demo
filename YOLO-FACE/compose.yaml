@@ -3,6 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: face-tracker
     ports:
       - "5000:5000"
     environment:
@@ -14,9 +15,18 @@ services:
       # - VIDEO_SOURCE=rtsp://192.168.1.100:554/stream  # Direct RTSP stream
       # For HLS/HTTP streams that need conversion, use DETECT_STREAM_URL instead:
       # - DETECT_STREAM_URL=https://example.com/stream.m3u8
-      - SKIP_FRAMES=1
-      - SD_ENABLED=1
-      - SD_PROMPT="Cartoon style portrait, people sitting at a table, vibrant colors, detailed background"
+      #- SKIP_FRAMES=1
+      - ANALYSIS_INTERVAL=30
+      - DWPOSE_ENABLED=1
+      - DEPTH_ENABLED=1
+      #- SD_ENABLED=1
+      #- SD_PROMPT="Cartoon style portrait, people sitting at a table, vibrant colors, detailed background"
+      #- SD2_ENABLED=1
+      #- SD2_PROMPT="Realistic portrait, people sitting at a table, natural colors"
+      - VLM_ENABLED=1
+      - VLM_PROMPT="Describe the scene in detail, including the number of people, their actions, and the environment"
+      - VLM_INTERVAL=300
+
     # Uncomment for webcam access:
     # devices:
     #   - /dev/video0:/dev/video0

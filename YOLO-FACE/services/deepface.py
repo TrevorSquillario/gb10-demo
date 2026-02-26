@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Optional
 
+import cv2
 import numpy as np
 
 from ultralytics.utils import LOGGER
@@ -89,7 +90,10 @@ class DeepFaceService:
         """
         if not self._running or not detections:
             return
-        snapshot = (frame.copy(), list(detections))
+        # Caller must pass a pre-copied frame (yolo worker passes raw_im which
+        # is already its own allocation); storing a reference avoids a redundant
+        # full-frame copy in this hot path.
+        snapshot = (frame, list(detections))
         # Replace any pending snapshot with the freshest one
         try:
             self._queue.get_nowait()
@@ -182,11 +186,24 @@ class DeepFaceService:
                         continue
 
                     # ── Step 2: full attribute analysis ───────────────────────────
+                    # Reuse the aligned face image from extract_faces so that
+                    # analyze() skips a second expensive detector pass on the
+                    # full crop.  best_face["face"] is float32 RGB [0,1].
+                    face_f32 = best_face.get("face")
+                    if face_f32 is not None and face_f32.size > 0:
+                        aligned_bgr = cv2.cvtColor(
+                            (face_f32 * 255).clip(0, 255).astype(np.uint8),
+                            cv2.COLOR_RGB2BGR,
+                        )
+                        analyze_input = aligned_bgr
+                    else:
+                        analyze_input = crop
+
                     results = DeepFace.analyze(
-                        img_path=crop,
+                        img_path=analyze_input,
                         actions=DEEPFACE_ACTIONS,
                         detector_backend=DETECTOR_BACKEND,
-                        enforce_detection=True,
+                        enforce_detection=False,
                         silent=True,
                     )
 

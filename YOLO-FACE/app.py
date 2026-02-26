@@ -14,11 +14,33 @@ import signal
 import atexit
 from threading import Lock
 from collections import defaultdict
+import logging
+
+# ── Thread-pool limits ────────────────────────────────────────────────────────
+# OpenCV, PyTorch, and ONNX Runtime each spin up one thread per CPU core by
+# default.  On a 20-core host that's ~60 idle CPU threads before any app code
+# runs.  Since all heavy inference is on the GPU, 2-4 threads per library is
+# more than enough and drops the total thread count dramatically.
+_CPU_THREADS = int(os.environ.get("APP_CPU_THREADS", "4"))
+os.environ.setdefault("OMP_NUM_THREADS", str(_CPU_THREADS))
+os.environ.setdefault("OPENBLAS_NUM_THREADS", str(_CPU_THREADS))
+os.environ.setdefault("MKL_NUM_THREADS", str(_CPU_THREADS))
+os.environ.setdefault("VECLIB_MAXIMUM_THREADS", str(_CPU_THREADS))
+os.environ.setdefault("NUMEXPR_NUM_THREADS", str(_CPU_THREADS))
+# TensorFlow (used lazily by DeepFace) respects these before it initialises
+os.environ.setdefault("TF_NUM_INTRAOP_THREADS", str(_CPU_THREADS))
+os.environ.setdefault("TF_NUM_INTEROP_THREADS", str(_CPU_THREADS))
+# ─────────────────────────────────────────────────────────────────────────────
 
 import cv2
 import numpy as np
 import torch
 from flask import Flask, Response, render_template, send_file
+
+# Apply thread limits to libraries that ignore env vars at import time
+cv2.setNumThreads(_CPU_THREADS)
+torch.set_num_threads(_CPU_THREADS)
+torch.set_num_interop_threads(_CPU_THREADS)
 import io
 
 from ultralytics import YOLO
@@ -31,9 +53,12 @@ from services.deepface import DeepFaceService
 from services.yolo import generate_frames as _service_generate_frames
 from services.dwpose import generate_dwpose as _service_generate_dwpose
 from services.depth_anything import generate_depth as _service_generate_depth
-from services.stablediffusion import StableDiffusionService, generate_stablediffusion as _service_generate_stablediffusion
+from services.streamdiffusion_v2 import StreamDiffusionV2Service, run_streamdiffusionv2 as _service_run_sd2
+from services.vlm import VlmService
 from dwpose import DWposeDetector
 from depth_anything.util.transform import transform as depth_transform
+
+LOGGER.setLevel(logging.DEBUG)
 
 app = Flask(__name__)
 
@@ -123,9 +148,14 @@ else:
 
 classes = model.names
 
-# Initialize DWpose detector for skeleton/pose overlay
-LOGGER.info("🦴 Initializing DWpose detector...")
-dwpose_detector = DWposeDetector()
+# DWpose skeleton overlay — optional, gated by DWPOSE_ENABLED env var
+DWPOSE_ENABLED = os.environ.get("DWPOSE_ENABLED", "0") == "1"
+dwpose_detector: DWposeDetector | None = None
+if DWPOSE_ENABLED:
+    LOGGER.info("🦴 Initializing DWpose detector...")
+    dwpose_detector = DWposeDetector()
+else:
+    LOGGER.info("DWpose detector disabled (set DWPOSE_ENABLED=1 to enable)")
 
 
 class DepthAnythingEngine:
@@ -185,30 +215,65 @@ class DepthAnythingEngine:
         return cv2.applyColorMap(depth, cv2.COLORMAP_INFERNO)
 
 
-# Initialise depth engine only when the engine file is present
+# Depth Anything estimation — optional, gated by DEPTH_ENABLED env var
+DEPTH_ENABLED = os.environ.get("DEPTH_ENABLED", "0") == "1"
 depth_engine: DepthAnythingEngine | None = None
-if os.path.exists(DEPTH_ENGINE_PATH):
-    LOGGER.info(f"📐 Initializing Depth Anything TRT engine from {DEPTH_ENGINE_PATH}...")
-    depth_engine = DepthAnythingEngine(DEPTH_ENGINE_PATH)
+if DEPTH_ENABLED:
+    if os.path.exists(DEPTH_ENGINE_PATH):
+        LOGGER.info(f"📐 Initializing Depth Anything TRT engine from {DEPTH_ENGINE_PATH}...")
+        depth_engine = DepthAnythingEngine(DEPTH_ENGINE_PATH)
+    else:
+        LOGGER.warning(f"Depth Anything engine not found at {DEPTH_ENGINE_PATH}; /depth_feed will be unavailable.")
 else:
-    LOGGER.warning(f"Depth Anything engine not found at {DEPTH_ENGINE_PATH}; /depth_feed will be unavailable.")
+    LOGGER.info("Depth Anything disabled (set DEPTH_ENABLED=1 to enable)")
 
 # Facial attribute analysis — runs in background every ANALYSIS_INTERVAL seconds
 ANALYSIS_INTERVAL = float(os.environ.get("ANALYSIS_INTERVAL", "15"))
 deepface_service = DeepFaceService(interval=ANALYSIS_INTERVAL)
 deepface_service.start()
 
-# Stable Diffusion XL Turbo + ControlNet — optional, gated by SD_ENABLED env var
-SD_ENABLED = os.environ.get("SD_ENABLED", "0") == "1"
-sd_service: StableDiffusionService | None = None
-if SD_ENABLED:
-    LOGGER.info("🎨 Initializing Stable Diffusion XL Turbo + ControlNet pipeline...")
-    sd_service = StableDiffusionService(
-        controlnet_model=os.environ.get("CONTROLNET_MODEL", "xinsir/controlnet-openpose-sdxl-1.0"),
-        sdxl_model=os.environ.get("SDXL_MODEL", "stabilityai/sdxl-turbo"),
+# VLM scene analysis — optional, gated by VLM_ENABLED env var
+VLM_ENABLED = os.environ.get("VLM_ENABLED", "0") == "1"
+vlm_service: VlmService | None = None
+
+# StreamDiffusionV2 — optional, gated by SD2_ENABLED env var
+SD2_ENABLED = os.environ.get("SD2_ENABLED", "0") == "1"
+sd2_service: StreamDiffusionV2Service | None = None
+if SD2_ENABLED:
+    LOGGER.info("🎬 Initializing StreamDiffusionV2 pipeline...")
+    sd2_service = StreamDiffusionV2Service(
+        config_path=os.environ.get(
+            "SD2_CONFIG_PATH",
+            "/app/YOLO-FACE/StreamDiffusionV2/configs/wan_causal_dmd_v2v.yaml",
+        ),
+        checkpoint_folder=os.environ.get(
+            "SD2_CHECKPOINT_FOLDER",
+            "/app/YOLO-FACE/StreamDiffusionV2/ckpts/wan_causal_dmd_v2v",
+        ),
     )
 else:
-    LOGGER.info("SD pipeline disabled (set SD_ENABLED=1 to enable)")
+    LOGGER.info("StreamDiffusionV2 pipeline disabled (set SD2_ENABLED=1 to enable)")
+
+# VLM context and service startup
+vlm_ctx = SimpleNamespace(
+    video_source=video_source,
+    video_source_type=video_source_type,
+    DETECT_STREAM_URL=DETECT_STREAM_URL,
+    vlm_prompt=os.environ.get("VLM_PROMPT", "Describe what you see in this image."),
+    vlm_interval=float(os.environ.get("VLM_INTERVAL", "30")),
+    vlm_frame_stride=int(os.environ.get("VLM_FRAME_STRIDE", "1")),
+    vlm_max_new_tokens=int(os.environ.get("VLM_MAX_NEW_TOKENS", "256")),
+)
+
+if VLM_ENABLED:
+    LOGGER.info("🤖 Initializing VLM scene analysis service...")
+    vlm_service = VlmService(vlm_ctx)
+    # vlm_service.start() is deferred until yolo_ctx (frame source) is ready
+else:
+    LOGGER.info("VLM service disabled (set VLM_ENABLED=1 to enable)")
+    # Ensure attrs initialised even when disabled
+    vlm_ctx.vlm_latest_result = None
+    vlm_ctx.vlm_last_call_time = 0.0
 
 # Shared queue that DWpose worker pushes into and the SD worker pulls from
 pose_queue: queue.Queue = queue.Queue(maxsize=4)
@@ -253,6 +318,8 @@ def stop_ffmpeg():
 def _cleanup():
     stop_ffmpeg()
     deepface_service.stop()
+    if vlm_service is not None:
+        vlm_service.stop()
 
 
 atexit.register(_cleanup)
@@ -297,6 +364,7 @@ yolo_ctx = SimpleNamespace(
     # mutable scalar state (owned by ctx; routes read via yolo_ctx)
     frame_lock=frame_lock,
     latest_frame=None,
+    latest_raw_frame=None,
     frame_counter=0,
     last_deepface_time=0.0,
     # mutable container state (same objects as module-level globals below)
@@ -309,6 +377,11 @@ yolo_ctx = SimpleNamespace(
     start_ffmpeg=start_ffmpeg,
     stop_ffmpeg=stop_ffmpeg,
 )
+
+# Wire VLM to read raw frames from the YOLO capture service
+vlm_ctx.frame_source_ctx = yolo_ctx
+if VLM_ENABLED and vlm_service is not None:
+    vlm_service.start()
 
 dwpose_ctx = SimpleNamespace(
     video_source=video_source,
@@ -330,21 +403,26 @@ depth_ctx = SimpleNamespace(
     start_ffmpeg=start_ffmpeg,
 )
 
-sd_ctx = SimpleNamespace(
-    pose_queue=pose_queue,
-    # Provide the DWpose context so generate_stablediffusion can start its own
-    # capture thread.  This makes /sd_feed independent of /dwpose_feed.
-    dwpose_ctx=dwpose_ctx,
-    sd_service=sd_service,
-    sd_prompt=os.environ.get("SD_PROMPT", "a person, cinematic lighting, photorealistic, 8k"),
-    sd_negative_prompt=os.environ.get("SD_NEGATIVE_PROMPT", ""),
-    sd_steps=int(os.environ.get("SD_STEPS", "4")),
-    sd_guidance_scale=float(os.environ.get("SD_GUIDANCE_SCALE", "0.0")),
-    sd_controlnet_scale=float(os.environ.get("SD_CONTROLNET_SCALE", "0.8")),
-    sd_width=int(os.environ.get("SD_WIDTH", "1024")),
-    sd_height=int(os.environ.get("SD_HEIGHT", "1024")),
-    sd_show_side_by_side=os.environ.get("SD_SIDE_BY_SIDE", "0") == "1",
-    show_fps=show_fps,
+sd2_ctx = SimpleNamespace(
+    sd2_service=sd2_service,
+    sd2_input_video=os.environ.get("SD2_INPUT_VIDEO", None),
+    sd2_prompt_file=os.environ.get("SD2_PROMPT_FILE", "/app/YOLO-FACE/StreamDiffusionV2/examples/original.mp4"),
+    sd2_output_folder=os.environ.get("SD2_OUTPUT_FOLDER", "/tmp/sd2_output"),
+    sd2_config_path=os.environ.get(
+        "SD2_CONFIG_PATH",
+        "/app/YOLO-FACE/StreamDiffusionV2/configs/wan_causal_dmd_v2v.yaml",
+    ),
+    sd2_checkpoint_folder=os.environ.get(
+        "SD2_CHECKPOINT_FOLDER",
+        "/app/YOLO-FACE/StreamDiffusionV2/ckpts/wan_causal_dmd_v2v",
+    ),
+    sd2_height=int(os.environ.get("SD2_HEIGHT", "480")),
+    sd2_width=int(os.environ.get("SD2_WIDTH", "832")),
+    sd2_fps=int(os.environ.get("SD2_FPS", "16")),
+    sd2_step=int(os.environ.get("SD2_STEP", "2")),
+    sd2_noise_scale=float(os.environ.get("SD2_NOISE_SCALE", "0.700")),
+    sd2_num_frames=int(os.environ.get("SD2_NUM_FRAMES", "81")),
+    sd2_target_fps=int(os.environ.get("SD2_TARGET_FPS")) if os.environ.get("SD2_TARGET_FPS") else None,
 )
 
 
@@ -368,9 +446,32 @@ def generate_depth():
     return _service_generate_depth(depth_ctx)
 
 
-def generate_stablediffusion():
-    """Yield MJPEG chunks of SDXL Turbo images conditioned on DWpose — delegates to services/stablediffusion.py."""
-    return _service_generate_stablediffusion(sd_ctx)
+def generate_streamdiffusionv2():
+    """Run SD2 inference then stream the output video as MJPEG frames."""
+    result = _service_run_sd2(sd2_ctx)
+    video_path = result.get("output_video", "")
+    if not video_path or not os.path.exists(video_path):
+        LOGGER.error(f"[SD2] Output video not found: {video_path}")
+        return
+    cap = cv2.VideoCapture(video_path)
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                # Loop back to the start
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                continue
+            ret2, buf = cv2.imencode(".jpg", frame)
+            if not ret2:
+                continue
+            yield (
+                b"--frame\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n" + buf.tobytes() + b"\r\n"
+            )
+    except GeneratorExit:
+        pass
+    finally:
+        cap.release()
 
 @app.route('/')
 def index():
@@ -388,6 +489,8 @@ def video_feed():
 @app.route('/dwpose_feed')
 def dwpose_feed():
     """DWpose skeleton overlay streaming route."""
+    if dwpose_detector is None:
+        return "DWpose detector not loaded. Set DWPOSE_ENABLED=1.", 503
     return Response(generate_dwpose(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
@@ -400,12 +503,12 @@ def depth_feed():
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
-@app.route('/sd_feed')
-def sd_feed():
-    """SDXL Turbo + ControlNet streaming route (requires DWpose feed to be running)."""
-    if sd_service is None:
-        return "Stable Diffusion pipeline not loaded. Set SD_ENABLED=1.", 503
-    return Response(generate_stablediffusion(),
+@app.route('/sd2_feed')
+def sd2_feed():
+    """StreamDiffusionV2 inference route — runs offline inference and streams the output video."""
+    if sd2_service is None:
+        return "StreamDiffusionV2 pipeline not loaded. Set SD2_ENABLED=1.", 503
+    return Response(generate_streamdiffusionv2(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
@@ -423,6 +526,12 @@ def crop(track_id: int):
     if data is None:
         return '', 404
     return send_file(io.BytesIO(data), mimetype='image/jpeg')
+
+
+@app.route('/vlm')
+def vlm():
+    """Return the latest VLM scene description as JSON."""
+    return {'description': vlm_ctx.vlm_latest_result}
 
 
 @app.route('/stats')

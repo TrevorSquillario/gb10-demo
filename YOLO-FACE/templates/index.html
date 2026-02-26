@@ -83,21 +83,103 @@
         /* ── Main ───────────────────────────────── */
         .main { display: flex; flex: 1; overflow: hidden; }
 
-        /* ── Video ──────────────────────────────── */
-        .video-pane {
+        /* ── Centre column (grid + VLM banner) ───── */
+        .center-col {
             flex: 1;
+            min-width: 0;
             display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #000;
+            flex-direction: column;
             overflow: hidden;
         }
 
-        .video-pane img {
+        /* ── 2×2 video grid ─────────────────────── */
+        .video-grid {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 2px;
+            background: var(--border);  /* gap colour */
+        }
+
+        /* Each quadrant */
+        .quad {
+            position: relative;
+            background: #000;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .quad img {
             width: 100%;
             height: 100%;
             object-fit: contain;
             display: block;
+        }
+
+        /* Quadrant label badge */
+        .quad-label {
+            position: absolute;
+            top: 6px;
+            left: 8px;
+            font-size: .6rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: .08em;
+            padding: 2px 8px;
+            border-radius: 10px;
+            background: rgba(0,0,0,.55);
+            color: var(--text-muted);
+            pointer-events: none;
+            z-index: 2;
+        }
+
+        /* Unavailable overlay */
+        .quad-unavailable {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            color: var(--text-muted);
+            font-size: .75rem;
+        }
+
+        .quad-unavailable .icon { font-size: 1.8rem; }
+
+        /* ── VLM banner ─────────────────────────── */
+        .vlm-banner {
+            flex-shrink: 0;
+            padding: 10px 20px;
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            min-height: 52px;
+        }
+
+        .vlm-label {
+            font-size: .6rem;
+            text-transform: uppercase;
+            letter-spacing: .1em;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+
+        .vlm-text {
+            font-size: .8rem;
+            color: var(--text);
+            text-align: center;
+            max-width: 900px;
+            line-height: 1.5;
+            font-style: italic;
         }
 
         /* ── Person panel ───────────────────────── */
@@ -141,7 +223,7 @@
 
         .person-list {
             flex: 1;
-            min-height: 0;  /* critical: lets flex child shrink so overflow-y works */
+            min-height: 0;
             overflow-y: auto;
             padding: 10px;
             display: flex;
@@ -155,7 +237,7 @@
 
         /* ── Person card ────────────────────────── */
         .person-card {
-            flex-shrink: 0;  /* never compress cards — list scrolls instead */
+            flex-shrink: 0;
             background: var(--surface2);
             border: 1px solid var(--border);
             border-radius: 12px;
@@ -196,7 +278,7 @@
             inset: 0;
             width: 100%; height: 100%;
             object-fit: cover;
-            display: none;         /* hidden until first successful load */
+            display: none;
         }
 
         .crop-fallback {
@@ -257,11 +339,11 @@
         .empty-panel .icon { font-size: 2.5rem; }
 
         /* ── Responsive ─────────────────────────── */
-        @media (max-width: 800px) {
+        @media (max-width: 900px) {
             html, body { overflow: auto; }
             .app { height: auto; min-height: 100vh; }
             .main { flex-direction: column; overflow: visible; }
-            .video-pane { height: 56vw; min-height: 200px; }
+            .video-grid { min-height: 50vw; }
             .person-panel { width: 100%; border-left: none; border-top: 1px solid var(--border); max-height: 420px; }
             header { flex-wrap: wrap; height: auto; padding: 10px 14px; gap: 10px; }
             .tracker-badge { display: none; }
@@ -292,14 +374,66 @@
                 <span class="lbl">Frames</span>
             </div>
         </div>
-        <span class="tracker-badge">BoT-SORT · DeepFace</span>
+        <span class="tracker-badge">BoT-SORT · DeepFace · VLM</span>
     </header>
 
     <div class="main">
-        <div class="video-pane">
-            <img src="{{ url_for('video_feed') }}" alt="Live stream">
-        </div>
 
+        <!-- ── Centre column: 2×2 grid + VLM banner ── -->
+        <div class="center-col">
+
+            <div class="video-grid">
+
+                <!-- Top-left: YOLO face detection -->
+                <div class="quad">
+                    <span class="quad-label">YOLO</span>
+                    <img src="{{ url_for('video_feed') }}" alt="YOLO feed">
+                </div>
+
+                <!-- Top-right: StreamDiffusion V2 -->
+                <div class="quad" id="quad-sd2">
+                    <span class="quad-label">StreamDiffusion V2</span>
+                    <img id="sd2-img" src="{{ url_for('sd2_feed') }}" alt="StreamDiffusion V2 feed"
+                         onerror="document.getElementById('quad-sd2').classList.add('sd2-error')">
+                    <div class="quad-unavailable" id="sd2-unavailable" style="display:none">
+                        <span class="icon">🎬</span>
+                        StreamDiffusion V2 not enabled
+                    </div>
+                </div>
+
+                <!-- Bottom-left: Depth Anything -->
+                <div class="quad" id="quad-depth">
+                    <span class="quad-label">Depth Anything</span>
+                    <img id="depth-img" src="{{ url_for('depth_feed') }}" alt="Depth feed"
+                         onerror="document.getElementById('quad-depth').classList.add('depth-error')">
+                    <div class="quad-unavailable" id="depth-unavailable" style="display:none">
+                        <span class="icon">📐</span>
+                        Depth engine not loaded
+                    </div>
+                </div>
+
+                <!-- Bottom-right: DWpose -->
+                <div class="quad" id="quad-dwpose">
+                    <span class="quad-label">DWpose</span>
+                    <img id="dwpose-img" src="{{ url_for('dwpose_feed') }}" alt="DWpose feed"
+                         onerror="document.getElementById('quad-dwpose').classList.add('dwpose-error')">
+                    <div class="quad-unavailable" id="dwpose-unavailable" style="display:none">
+                        <span class="icon">🦴</span>
+                        DWpose not enabled
+                    </div>
+                </div>
+
+            </div><!-- /.video-grid -->
+
+            <!-- VLM description banner -->
+            <div class="vlm-banner">
+                <span class="vlm-label">VLM · Scene Description</span>
+                <p class="vlm-text" id="vlm-text">Waiting for scene analysis…</p>
+            </div>
+
+        </div><!-- /.center-col -->
+
+        <!-- ── Right panel: DeepFace person cards ── -->
         <aside class="person-panel">
             <div class="panel-header">
                 <h2>Detected People</h2>
@@ -312,9 +446,10 @@
                 </div>
             </div>
         </aside>
-    </div>
 
-</div>
+    </div><!-- /.main -->
+
+</div><!-- /.app -->
 <script>
     const EMOTION_EMOJI = {
         happy: '😄', sad: '😢', angry: '😠',
@@ -325,6 +460,21 @@
     const cards = {};   // track_id -> { lastRefresh }
     const knownIds = new Set();
 
+    // ── Show unavailable overlay when a feed 404s/503s ───────────────────────
+    document.getElementById('sd2-img').addEventListener('error', () => {
+        document.getElementById('sd2-img').style.display = 'none';
+        document.getElementById('sd2-unavailable').style.display = 'flex';
+    });
+    document.getElementById('depth-img').addEventListener('error', () => {
+        document.getElementById('depth-img').style.display = 'none';
+        document.getElementById('depth-unavailable').style.display = 'flex';
+    });
+    document.getElementById('dwpose-img').addEventListener('error', () => {
+        document.getElementById('dwpose-img').style.display = 'none';
+        document.getElementById('dwpose-unavailable').style.display = 'flex';
+    });
+
+    // ── Person card helpers ───────────────────────────────────────────────────
     function buildCard(id) {
         const card = document.createElement('div');
         card.className = 'person-card';
@@ -333,7 +483,7 @@
             <div class="card-top">
                 <div class="crop-wrap">
                     <span class="crop-fallback" id="crop-fb-${id}">👤</span>
-                    <img id="crop-${id}" src="" alt="Person ${id}"
+                    <img id="crop-${id}" alt="Person ${id}"
                          onload="this.style.display='block'; document.getElementById('crop-fb-${id}').style.display='none'"
                          onerror="this.style.display='none'; document.getElementById('crop-fb-${id}').style.display='flex'" />
                 </div>
@@ -385,49 +535,60 @@
         const img = document.getElementById(`crop-${id}`);
         if (img) {
             const url = `/crop/${id}?t=${Date.now()}`;
-            // Reset display so onload/onerror fire correctly after src change
-            img.style.display = 'none';
+            // Don't hide while loading — onload/onerror manage visibility
             img.src = url;
         }
     }
 
+    // ── Main polling loop ─────────────────────────────────────────────────────
     async function tick() {
         try {
-            const [sRes, aRes] = await Promise.all([fetch('/stats'), fetch('/attributes')]);
-            if (!sRes.ok || !aRes.ok) return;
-            const stats = await sRes.json();
-            const attrs = await aRes.json();
+            const [sRes, aRes, vRes] = await Promise.all([
+                fetch('/stats'),
+                fetch('/attributes'),
+                fetch('/vlm'),
+            ]);
 
-            document.getElementById('h-current').textContent = stats.current_people ?? 0;
-            document.getElementById('h-total').textContent   = stats.total_tracked  ?? 0;
-            document.getElementById('h-frames').textContent  = stats.frame_count    ?? 0;
-
-            // Panel shows only IDs that passed the DeepFace confidence gate
-            // (i.e. have an entry in /attributes). Header stats still reflect
-            // all YOLO-tracked IDs from /stats.
-            const attrIds = Object.keys(attrs).map(Number);
-            const list = document.getElementById('person-list');
-
-            if (attrIds.length && list.querySelector('.empty-panel')) list.innerHTML = '';
-
-            for (const id of attrIds) {
-                if (!knownIds.has(id)) {
-                    knownIds.add(id);
-                    list.prepend(buildCard(id));
-                    cards[id] = { lastRefresh: 0 };
-                }
+            if (sRes.ok) {
+                const stats = await sRes.json();
+                document.getElementById('h-current').textContent = stats.current_people ?? 0;
+                document.getElementById('h-total').textContent   = stats.total_tracked  ?? 0;
+                document.getElementById('h-frames').textContent  = stats.frame_count    ?? 0;
             }
 
-            const now = Date.now();
-            for (const id of attrIds) {
-                updateCard(id, attrs[id]);
-                if (cards[id] && now - cards[id].lastRefresh > 2000) {
-                    refreshCrop(id);
-                    cards[id].lastRefresh = now;
+            if (aRes.ok) {
+                const attrs   = await aRes.json();
+                const attrIds = Object.keys(attrs).map(Number);
+                const list    = document.getElementById('person-list');
+
+                if (attrIds.length && list.querySelector('.empty-panel')) list.innerHTML = '';
+
+                for (const id of attrIds) {
+                    if (!knownIds.has(id)) {
+                        knownIds.add(id);
+                        list.prepend(buildCard(id));
+                        cards[id] = { lastRefresh: 0 };
+                    }
                 }
+
+                const now = Date.now();
+                for (const id of attrIds) {
+                    updateCard(id, attrs[id]);
+                    if (cards[id] && now - cards[id].lastRefresh > 2000) {
+                        refreshCrop(id);
+                        cards[id].lastRefresh = now;
+                    }
+                }
+
+                document.getElementById('panel-count').textContent = attrIds.length;
             }
 
-            document.getElementById('panel-count').textContent = attrIds.length;
+            if (vRes.ok) {
+                const vData = await vRes.json();
+                const txt   = vData.description;
+                if (txt) document.getElementById('vlm-text').textContent = txt;
+            }
+
         } catch (e) { /* ignore transient errors */ }
     }
 

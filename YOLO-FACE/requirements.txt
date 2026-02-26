@@ -2,14 +2,37 @@ flask==3.0.0
 ultralytics>=8.0.0
 opencv-python-headless==4.8.1.78
 numpy>=1.24.0
+Pillow>=9.0.0
+psutil
 deepface>=0.0.93
 tf-keras>=2.18.0  # required by deepface with TF 2.x
 tensorrt
 polygraphy
-numpy
 tqdm
 matplotlib
 diffusers
-transformers 
-accelerate 
+transformers
+accelerate
 controlnet-aux
+qwen-vl-utils  # optional: improves Qwen2.5-VL input processing in services/vlm.py
+
+# ── StreamDiffusionV2 dependencies ──────────────────────────────────────────
+# Packages below are required by streamv2v/inference.py and the causvid internals.
+# torch/torchvision/torchaudio/xformers are installed separately in the Dockerfile
+# from the cu130 index, so they are intentionally omitted here.
+#xformers
+#omegaconf>=2.3.0          # OmegaConf.load() called directly in inference.py
+#einops>=0.8.1             # rearrange() used in inference.py
+#safetensors>=0.5.3        # model checkpoint loading (load_state_dict / from_pretrained)
+#timm>=1.0.19              # vision-transformer components used by causvid
+#sentencepiece>=0.2.0      # tokenizer backend for T5 / multilingual text encoders
+#ftfy>=6.3.1               # text normalisation required by open_clip / CLIP tokenizer
+#open_clip_torch>=3.0.0    # CLIP text encoder used by the Wan pipeline
+#peft>=0.17.0              # LoRA / adapter support for the generator
+## flash_attn installed separately in Dockerfile with --no-build-isolation (requires torch at build time)
+## flash_attn>=2.7.4
+#av>=13.1.0                # low-level video I/O (used by torchvision.io.read_video)
+#decord>=0.6.0             # fast video decoding used in causvid data loaders
+#imageio>=2.37.0           # diffusers export_to_video backend
+#imageio-ffmpeg>=0.6.0     # ffmpeg codec support for imageio
+#xfuser>=0.4.4             # sequence parallelism utilities imported by causvid
