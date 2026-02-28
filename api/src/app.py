@@ -15,6 +15,7 @@ Routes
   GET  /stats             JSON — current/total people from latest detections
   GET  /crop/<track_id>   JPEG — latest face thumbnail
   GET  /vlm               JSON — latest VLM scene description
+  GET  /gpu               JSON — per-GPU utilisation stats (via NVML)
 
 Environment variables
 ---------------------
@@ -25,6 +26,7 @@ Environment variables
 import io
 import json
 import os
+import subprocess
 
 import cv2
 import numpy as np
@@ -35,6 +37,15 @@ from frame_bus import FrameBus, REDIS_URL
 
 configure_logging()
 log = get_logger(__name__)
+
+# Optional NVML for GPU stats
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    _NVML_OK = True
+except Exception:
+    _NVML_OK = False
+    log.warning("[API] pynvml not available — /gpu will use nvidia-smi fallback")
 
 app = Flask(__name__, template_folder="templates")
 bus = FrameBus()
@@ -140,9 +151,13 @@ def stats():
         dets = {int(k): json.loads(v) for k, v in raw_dets.items()}
     except Exception:
         dets = {}
+    total_raw  = r.get("stats:total")
+    frames_raw = r.get("stats:frames")
     return jsonify({
         "current_people": len(dets),
         "tracked_ids":    sorted(dets.keys()),
+        "total_tracked":  int(total_raw)  if total_raw  else 0,
+        "frame_count":    int(frames_raw) if frames_raw else 0,
     })
 
 
@@ -158,6 +173,89 @@ def crop(track_id: int):
 def vlm():
     raw = r.get("vlm:latest")
     return jsonify({"description": raw.decode() if raw else None})
+
+
+def _gpu_via_smi():
+    """Query GPU stats via nvidia-smi CSV output. Returns list of dicts or None on failure."""
+    try:
+        fields = (
+            "index,name,utilization.gpu,"
+            "clocks.current.sm,power.draw.instant,temperature.gpu"
+        )
+        out = subprocess.check_output(
+            ["nvidia-smi", f"--query-gpu={fields}", "--format=csv,noheader,nounits"],
+            timeout=3, stderr=subprocess.DEVNULL,
+        ).decode()
+        gpus = []
+        for line in out.strip().splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 6:
+                continue
+            def _int(v):
+                try: return int(v)
+                except Exception: return None
+            def _float(v):
+                try: return round(float(v), 1)
+                except Exception: return None
+            gpus.append({
+                "index":    _int(parts[0]),
+                "name":     parts[1],
+                "gpu_util": _int(parts[2]),
+                "sm_clock": _int(parts[3]),
+                "power":    _float(parts[4]),
+                "temp":     _int(parts[5]),
+            })
+        return gpus or None
+    except Exception:
+        return None
+
+
+@app.route("/gpu")
+def gpu():
+    """Return per-GPU utilisation stats — tries nvidia-smi first, then NVML."""
+    # ── nvidia-smi path (most reliable across architectures) ─────────────────
+    smi = _gpu_via_smi()
+    if smi is not None:
+        return jsonify({"gpus": smi, "source": "smi"})
+
+    # ── NVML path (fallback) ──────────────────────────────────────────────────
+    if not _NVML_OK:
+        return jsonify({"gpus": []})
+    try:
+        count = pynvml.nvmlDeviceGetCount()
+    except Exception as exc:
+        return jsonify({"gpus": [], "error": str(exc)})
+
+    result = []
+    for i in range(count):
+        try:
+            h = pynvml.nvmlDeviceGetHandleByIndex(i)
+        except Exception:
+            continue
+
+        def _get(fn, *args, default=None):
+            try:
+                return fn(*args)
+            except Exception:
+                return default
+
+        name_raw = _get(pynvml.nvmlDeviceGetName, h)
+        if isinstance(name_raw, bytes):
+            name_raw = name_raw.decode()
+        util     = _get(pynvml.nvmlDeviceGetUtilizationRates, h)
+        sm_clock = _get(pynvml.nvmlDeviceGetClockInfo, h, pynvml.NVML_CLOCK_SM)
+        pwr_mw   = _get(pynvml.nvmlDeviceGetPowerUsage, h)
+        temp     = _get(pynvml.nvmlDeviceGetTemperature, h, pynvml.NVML_TEMPERATURE_GPU)
+
+        result.append({
+            "index":    i,
+            "name":     name_raw or f"GPU {i}",
+            "gpu_util": util.gpu if util else None,
+            "sm_clock": int(sm_clock) if sm_clock is not None else None,
+            "power":    round(pwr_mw / 1000, 1) if pwr_mw is not None else None,
+            "temp":     temp,
+        })
+    return jsonify({"gpus": result, "source": "nvml"})
 
 
 @app.route("/healthz")

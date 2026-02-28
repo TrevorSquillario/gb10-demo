@@ -168,10 +168,8 @@ services:
       stack: 67108864
     environment:
       VLM_MODEL_ID:       "Qwen/Qwen2.5-VL-7B-Instruct"
-      VLM_PROMPT:         "Describe what you see in this image in 3 sentences."
+      VLM_PROMPT:         "Describe what you see in this image. Include detailed description of the people, their actions, and what they are wearing."
       VLM_INTERVAL:       "30"
-      VLM_FRAME_STRIDE:   "1"
-      VLM_MAX_NEW_TOKENS: "256"
       REDIS_URL:          "redis://redis:6379"
       LOG_JSON:           "1"
       #HF_HUB_OFFLINE: "1"
@@ -192,7 +190,7 @@ services:
 
   # ── Stable Diffusion XL Turbo + ControlNet (optional) ──────────────────────
   stable_diffusion:
-    #profiles: [stable_diffusion]
+    profiles: [stable_diffusion]
     build:
       context: .
       dockerfile: stable_diffusion/Dockerfile
@@ -240,6 +238,15 @@ services:
       REDIS_URL:      "redis://redis:6379"
       MJPEG_QUALITY:  "75"
       LOG_JSON:       "1"
+    volumes:
+      - ./api/src/templates/index.html:/app/templates/index.html:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     depends_on:
       redis:
         condition: service_healthy

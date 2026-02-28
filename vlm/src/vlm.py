@@ -36,7 +36,7 @@ log = get_logger(__name__)
 VLM_MODEL_ID       = os.environ.get("VLM_MODEL_ID",      "Qwen/Qwen2.5-VL-7B-Instruct")
 VLM_PROMPT         = os.environ.get("VLM_PROMPT",        "Describe what you see in this image.")
 VLM_INTERVAL       = float(os.environ.get("VLM_INTERVAL",       "30"))
-VLM_MAX_NEW_TOKENS = int(os.environ.get("VLM_MAX_NEW_TOKENS", "256"))
+VLM_MAX_NEW_TOKENS = int(os.environ.get("VLM_MAX_NEW_TOKENS", "1024"))
 VLM_RESULT_TTL     = int(os.environ.get("VLM_RESULT_TTL",     "120"))
 
 VLM_KEY = "vlm:latest"

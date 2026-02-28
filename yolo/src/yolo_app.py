@@ -20,7 +20,6 @@ Environment variables
   MAX_DET             Max detections per frame.  Default: 50
   SKIP_FRAMES         Run inference every N frames.  Default: 1
   SHOW_FPS            Overlay FPS counter (1/0).  Default: 1
-  SHOW_STATS          Overlay people-count stats (1/0).  Default: 1
   SHOW_CONF           Overlay confidence scores (1/0).  Default: 0
   CROP_ENCODE_INTERVAL  Re-encode face thumbnail every N frames.  Default: 5
   MJPEG_QUALITY       JPEG quality 1-100.  Default: 75
@@ -59,7 +58,6 @@ IOU                = float(os.environ.get("IOU", "0.3"))
 MAX_DET            = int(os.environ.get("MAX_DET", "50"))
 SKIP_FRAMES        = int(os.environ.get("SKIP_FRAMES", "1"))
 SHOW_FPS           = os.environ.get("SHOW_FPS", "1") == "1"
-SHOW_STATS         = os.environ.get("SHOW_STATS", "1") == "1"
 SHOW_CONF          = os.environ.get("SHOW_CONF", "0") == "1"
 CROP_ENCODE_INTERVAL = int(os.environ.get("CROP_ENCODE_INTERVAL", "5"))
 MJPEG_QUALITY      = int(os.environ.get("MJPEG_QUALITY", "75"))
@@ -79,14 +77,6 @@ def _fps_overlay(im: np.ndarray, fps: int) -> None:
     cv2.rectangle(im, (fx - 5, 25 - th - 5), (fx + tw + 5, 25 + bl), (255, 255, 255), -1)
     cv2.putText(im, text, (fx, 25), font, scale, (104, 31, 17), thick, cv2.LINE_AA)
 
-
-def _stats_overlay(im: np.ndarray, current: int, total: int) -> None:
-    font  = cv2.FONT_HERSHEY_SIMPLEX
-    scale, thick = 0.5, 1
-    for y, txt in [(50, f"Current: {current}"), (75, f"Total: {total}")]:
-        (tw, th), bl = cv2.getTextSize(txt, font, scale, thick)
-        cv2.rectangle(im, (5, y - th - 5), (15 + tw, y + bl), (255, 255, 255), -1)
-        cv2.putText(im, txt, (10, y), font, scale, (104, 31, 17), thick, cv2.LINE_AA)
 
 
 def main() -> None:
@@ -200,8 +190,9 @@ def main() -> None:
                 fps_timer   = now
             _fps_overlay(annotated, fps_display)
 
-        if SHOW_STATS:
-            _stats_overlay(annotated, len(current_people), len(tracked_people))
+        # Write running totals so the API /stats route can read them
+        r.set("stats:total", len(tracked_people))
+        r.set("stats:frames", frame_counter)
 
         # ── Publish annotated frame ──────────────────────────────────────────
         bus.publish("yolo", annotated, meta={

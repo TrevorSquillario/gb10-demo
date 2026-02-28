@@ -35,7 +35,7 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 24px;
+            padding: 0 0 0 24px;
             height: 56px;
             background: var(--surface);
             border-bottom: 1px solid var(--border);
@@ -350,6 +350,93 @@
         }
 
         @media (min-width: 1400px) { :root { --panel-w: 380px; } }
+
+        /* ── GPU widget ─────────────────────────── */
+        .gpu-widget {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 14px;
+            border-left: 1px solid var(--border);
+            width: var(--panel-w);
+            flex-shrink: 0;
+        }
+
+        .gpu-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 80px;
+        }
+
+        .gpu-name {
+            font-size: .58rem;
+            text-transform: uppercase;
+            letter-spacing: .07em;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 110px;
+        }
+
+        .gpu-row {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+        }
+
+        .gpu-util-val {
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--accent);
+            line-height: 1;
+        }
+
+        .gpu-util-pct {
+            font-size: .7rem;
+            color: var(--text-muted);
+        }
+
+        .gpu-subrow {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .gpu-sub {
+            font-size: .65rem;
+            color: var(--text-muted);
+        }
+
+        .gpu-sub span {
+            color: var(--text);
+            font-weight: 600;
+        }
+
+        .gpu-canvas-wrap {
+            position: relative;
+        }
+
+        #gpu-canvas {
+            display: block;
+            border-radius: 4px;
+        }
+
+        .gpu-canvas-pct {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: .58rem;
+            color: rgba(255,255,255,.25);
+            pointer-events: none;
+        }
+
+        @media (max-width: 900px) {
+            .gpu-widget { display: none; }
+        }
     </style>
 </head>
 <body>
@@ -358,23 +445,42 @@
     <header>
         <div class="header-title">
             <span class="dot"></span>
-            Person Tracker
+            Dell Pro Max with GB10 Demo
         </div>
+        <span class="tracker-badge">YOLO-FACE · DeepFace · VLM · Depth Anything · DWpose</span>
         <div class="header-stats">
             <div class="stat-chip">
                 <span class="val" id="h-current">0</span>
-                <span class="lbl">In Frame</span>
+                <span class="lbl">People In Frame</span>
             </div>
             <div class="stat-chip">
                 <span class="val" id="h-total">0</span>
-                <span class="lbl">Total</span>
+                <span class="lbl">Unique People Detected</span>
             </div>
             <div class="stat-chip">
                 <span class="val" id="h-frames">0</span>
-                <span class="lbl">Frames</span>
+                <span class="lbl">Total Frames</span>
             </div>
         </div>
-        <span class="tracker-badge">BoT-SORT · DeepFace · VLM</span>
+
+        <!-- GPU sparkline widget -->
+        <div class="gpu-widget" id="gpu-widget">
+            <div class="gpu-stats">
+                <div class="gpu-name" id="gpu-name">GPU</div>
+                <div class="gpu-row">
+                    <span class="gpu-util-val" id="gpu-util">—</span>
+                    <span class="gpu-util-pct">%</span>
+                </div>
+                <div class="gpu-subrow">
+                    <div class="gpu-sub">SM <span id="gpu-sm">—</span></div>
+                    <div class="gpu-sub">PWR <span id="gpu-pwr">—</span></div>
+                    <div class="gpu-sub">TEMP <span id="gpu-temp">—</span></div>
+                </div>
+            </div>
+            <div class="gpu-canvas-wrap">
+                <canvas id="gpu-canvas" width="140" height="44"></canvas>
+            </div>
+        </div>
     </header>
 
     <div class="main">
@@ -390,13 +496,11 @@
                     <img src="{{ url_for('video_feed') }}" alt="YOLO feed">
                 </div>
 
-                <!-- Top-right: Stable Diffusion -->
-                <div class="quad" id="quad-sd">
-                    <span class="quad-label">Stable Diffusion</span>
-                    <img id="sd-img" src="{{ url_for('sd_feed') }}" alt="Stable Diffusion feed">
-                    <div class="quad-unavailable" id="sd-unavailable" style="display:none">
-                        <span class="icon">🎨</span>
-                        Stable Diffusion not enabled
+                <!-- Top-right: VLM Scene Description -->
+                <div class="quad" id="quad-vlm" style="align-items:flex-start; justify-content:flex-start; padding:14px 16px; background:var(--surface);">
+                    <span class="quad-label">VLM</span>
+                    <div style="display:flex; flex-direction:column; gap:8px; width:100%; height:100%; padding-top:28px;">
+                        <p id="vlm-text" style="color:var(--text); line-height:1.5; font-style:italic; overflow:hidden; flex:1;">Waiting for scene analysis…</p>
                     </div>
                 </div>
 
@@ -423,12 +527,6 @@
                 </div>
 
             </div><!-- /.video-grid -->
-
-            <!-- VLM description banner -->
-            <div class="vlm-banner">
-                <span class="vlm-label">VLM · Scene Description</span>
-                <p class="vlm-text" id="vlm-text">Waiting for scene analysis…</p>
-            </div>
 
         </div><!-- /.center-col -->
 
@@ -460,25 +558,6 @@
     const knownIds = new Set();
 
     // ── Show unavailable overlay when a feed 404s/503s ───────────────────────
-    // SD may return 503 while the model is still warming up — retry every 15 s.
-    let _sdRetry = null;
-    function _sdStartRetry() {
-        document.getElementById('sd-img').style.display = 'none';
-        document.getElementById('sd-unavailable').style.display = 'flex';
-        if (!_sdRetry) {
-            _sdRetry = setInterval(() => {
-                const img = document.getElementById('sd-img');
-                img.src = '/sd_feed?t=' + Date.now();
-            }, 15000);
-        }
-    }
-    document.getElementById('sd-img').addEventListener('error', _sdStartRetry);
-    document.getElementById('sd-img').addEventListener('load', () => {
-        // Feed is live — cancel retry and show the image
-        if (_sdRetry) { clearInterval(_sdRetry); _sdRetry = null; }
-        document.getElementById('sd-img').style.display = 'block';
-        document.getElementById('sd-unavailable').style.display = 'none';
-    });
     document.getElementById('depth-img').addEventListener('error', () => {
         document.getElementById('depth-img').style.display = 'none';
         document.getElementById('depth-unavailable').style.display = 'flex';
@@ -554,13 +633,121 @@
         }
     }
 
+    // ── GPU sparkline ─────────────────────────────────────────────────────────
+    const GPU_HISTORY = new Array(60).fill(null);
+    let gpuCtx = null;
+
+    (function initGpu() {
+        const canvas = document.getElementById('gpu-canvas');
+        if (canvas) gpuCtx = canvas.getContext('2d');
+    })();
+
+    function drawGpuSparkline() {
+        const canvas = document.getElementById('gpu-canvas');
+        if (!gpuCtx || !canvas) return;
+        const W = canvas.width, H = canvas.height;
+        gpuCtx.clearRect(0, 0, W, H);
+
+        // Draw faint 25 / 50 / 75% grid lines
+        gpuCtx.strokeStyle = 'rgba(255,255,255,0.06)';
+        gpuCtx.lineWidth   = 1;
+        [0.25, 0.5, 0.75].forEach(f => {
+            const y = H - f * H;
+            gpuCtx.beginPath();
+            gpuCtx.moveTo(0, y); gpuCtx.lineTo(W, y);
+            gpuCtx.stroke();
+        });
+
+        const pts = GPU_HISTORY
+            .map((v, i) => v !== null ? { x: (i / (GPU_HISTORY.length - 1)) * W, y: H - (v / 100) * (H - 2) } : null)
+            .filter(Boolean);
+        if (pts.length < 2) return;
+
+        // Filled area
+        const grad = gpuCtx.createLinearGradient(0, 0, 0, H);
+        grad.addColorStop(0, 'rgba(102,126,234,0.45)');
+        grad.addColorStop(1, 'rgba(102,126,234,0.0)');
+
+        gpuCtx.beginPath();
+        gpuCtx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+            // Smooth via cubic bezier
+            const px = pts[i - 1], cx = pts[i];
+            const cpX = (px.x + cx.x) / 2;
+            gpuCtx.bezierCurveTo(cpX, px.y, cpX, cx.y, cx.x, cx.y);
+        }
+        gpuCtx.lineTo(pts[pts.length - 1].x, H);
+        gpuCtx.lineTo(pts[0].x, H);
+        gpuCtx.closePath();
+        gpuCtx.fillStyle = grad;
+        gpuCtx.fill();
+
+        // Line on top
+        gpuCtx.beginPath();
+        gpuCtx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) {
+            const px = pts[i - 1], cx = pts[i];
+            const cpX = (px.x + cx.x) / 2;
+            gpuCtx.bezierCurveTo(cpX, px.y, cpX, cx.y, cx.x, cx.y);
+        }
+        gpuCtx.strokeStyle  = '#667eea';
+        gpuCtx.lineWidth    = 1.5;
+        gpuCtx.lineJoin     = 'round';
+        gpuCtx.shadowColor  = 'rgba(102,126,234,0.6)';
+        gpuCtx.shadowBlur   = 4;
+        gpuCtx.stroke();
+        gpuCtx.shadowBlur   = 0;
+
+        // Dot at newest point
+        const last = pts[pts.length - 1];
+        gpuCtx.beginPath();
+        gpuCtx.arc(last.x, last.y, 2.5, 0, Math.PI * 2);
+        gpuCtx.fillStyle = '#a5b4fc';
+        gpuCtx.fill();
+    }
+
+    function updateGpu(gpus) {
+        if (!gpus || !gpus.length) return;
+        const g = gpus[0];
+        const util = g.gpu_util ?? null;
+        const sparkVal = util;
+
+        // Push into history ring
+        GPU_HISTORY.push(sparkVal);
+        if (GPU_HISTORY.length > 60) GPU_HISTORY.shift();
+
+        const utilEl = document.getElementById('gpu-util');
+        const nameEl = document.getElementById('gpu-name');
+        const smEl   = document.getElementById('gpu-sm');
+        const pwrEl  = document.getElementById('gpu-pwr');
+        const tempEl = document.getElementById('gpu-temp');
+
+        if (utilEl) utilEl.textContent = util !== null ? util : '—';
+        if (nameEl && g.name) {
+            // Shorten e.g. "NVIDIA GeForce RTX 4090" → "RTX 4090"
+            nameEl.textContent = g.name.replace(/^NVIDIA\s+/i, '').replace(/^GeForce\s+/i, '');
+        }
+        if (smEl)  smEl.textContent  = g.sm_clock != null ? `${g.sm_clock}MHz` : '—';
+        if (pwrEl) pwrEl.textContent = g.power    != null ? `${g.power}W`      : '—';
+        if (tempEl) tempEl.textContent = g.temp != null ? `${g.temp}°C` : '—';
+
+        // Colour-code util (green→yellow→red)
+        if (utilEl) {
+            const u = util ?? 0;
+            utilEl.style.color = u > 85 ? '#f87171' : u > 60 ? '#fbbf24' : 'var(--accent)';
+        }
+
+        drawGpuSparkline();
+    }
+
     // ── Main polling loop ─────────────────────────────────────────────────────
     async function tick() {
         try {
-            const [sRes, aRes, vRes] = await Promise.all([
+            const [sRes, aRes, vRes, gRes] = await Promise.all([
                 fetch('/stats'),
                 fetch('/attributes'),
                 fetch('/vlm'),
+                fetch('/gpu'),
             ]);
 
             if (sRes.ok) {
@@ -600,11 +787,41 @@
             if (vRes.ok) {
                 const vData = await vRes.json();
                 const txt   = vData.description;
-                if (txt) document.getElementById('vlm-text').textContent = txt;
+                if (txt) {
+                    document.getElementById('vlm-text').textContent = txt;
+                    fitVlmText();
+                }
+            }
+
+            if (gRes.ok) {
+                const gData = await gRes.json();
+                if (gData.gpus && gData.gpus.length) updateGpu(gData.gpus);
             }
 
         } catch (e) { /* ignore transient errors */ }
     }
+
+    // ── Auto-fit VLM text to fill the quad container ─────────────────────────
+    function fitVlmText() {
+        const el    = document.getElementById('vlm-text');
+        const quad  = document.getElementById('quad-vlm');
+        if (!el || !quad) return;
+        // Reserve space for the label row (~48px for padding + label + gap)
+        const maxH  = quad.clientHeight - 48;
+        const maxW  = quad.clientWidth  - 32; // quad has 16px side padding each side
+        // Temporarily unlimit overflow for measuring
+        el.style.overflow = 'visible';
+        let lo = 8, hi = 120;
+        while (hi - lo > 0.5) {
+            const mid = (lo + hi) / 2;
+            el.style.fontSize = mid + 'px';
+            if (el.scrollHeight <= maxH) lo = mid;
+            else hi = mid;
+        }
+        el.style.fontSize = lo + 'px';
+        el.style.overflow = 'hidden';
+    }
+    window.addEventListener('resize', fitVlmText);
 
     tick();
     setInterval(tick, 2000);
