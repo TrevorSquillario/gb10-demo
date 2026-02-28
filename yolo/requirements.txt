@@ -1,0 +1,8 @@
+ultralytics>=8.0.0
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+redis>=5.0.0
+msgpack>=1.0.0
+# torch/torchvision/torchaudio are pre-installed in the nvcr.io/nvidia/pytorch
+# base image — do NOT list them here or pip will overwrite them from PyPI and
+# break the compiled C extensions.

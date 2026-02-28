@@ -1,0 +1,256 @@
+services:
+
+  # ── Infrastructure ───────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    networks:
+      - gb10-vision
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── Capture ──────────────────────────────────────────────────────────────
+  capture:
+    build:
+      context: .
+      dockerfile: capture/Dockerfile
+    restart: unless-stopped
+    environment:
+      VIDEO_SOURCE: /videos/people2.mkv
+      CAPTURE_FPS:       "30"
+      REDIS_URL:         "redis://redis:6379"
+      LOG_JSON:          "1"
+    #devices:
+    #  - /dev/video0:/dev/video0
+    volumes:
+      - ~/gb10/videos:/videos
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── YOLO face detection + tracking ───────────────────────────────────────
+  yolo:
+    build:
+      context: .
+      dockerfile: yolo/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      MODEL_PATH:   /app/models/yolov12n-face.pt
+      CONF:         "0.3"
+      IOU:          "0.3"
+      MAX_DET:      "50"
+      SHOW_FPS:     "1"
+      SHOW_STATS:   "1"
+      REDIS_URL:    "redis://redis:6379"
+      LOG_JSON:     "1"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── DWpose skeleton detection (optional — enable with: --profile dwpose) ─
+  dwpose: 
+    #profiles: [dwpose]
+    build:
+      context: .
+      dockerfile: dwpose/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      TRT_DET_ENGINE:  /app/models/yolox_l.engine
+      TRT_POSE_ENGINE: /app/models/dw-ll_ucoco_384.engine
+      SHOW_FPS:        "1"
+      REDIS_URL:       "redis://redis:6379"
+      LOG_JSON:        "1"
+    volumes:
+      - ~/gb10/models/comfyui/tensorrt/dwpose:/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── Depth Anything TRT (optional — enable with: --profile depth) ─────────
+  depth:
+    #profiles: [depth]
+    build:
+      context: .
+      dockerfile: depth/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      DEPTH_ENGINE_PATH: /app/models/v2_depth_anything_vitl-fp16.engine
+      DEPTH_GRAYSCALE:   "0"
+      SHOW_FPS:          "1"
+      REDIS_URL:         "redis://redis:6379"
+      LOG_JSON:          "1"
+    volumes:
+      #- ~/gb10/models/comfyui/tensorrt/depth-anything:/app/models:ro
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── DeepFace (optional — enable with: --profile deepface) ────────────────
+  deepface:
+    #profiles: [deepface]
+    build:
+      context: .
+      dockerfile: deepface/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      REDIS_URL:            "redis://redis:6379"
+      LOG_JSON:             "1"
+    volumes:
+      - ~/gb10/models/deepface:/root/.deepface/weights
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── VLM (optional — enable with: --profile vlm) ───────────────────────────
+  vlm:
+    #profiles: [vlm]
+    build:
+      context: .
+      dockerfile: vlm/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      VLM_MODEL_ID:       "Qwen/Qwen2.5-VL-7B-Instruct"
+      VLM_PROMPT:         "Describe what you see in this image in 3 sentences."
+      VLM_INTERVAL:       "30"
+      VLM_FRAME_STRIDE:   "1"
+      VLM_MAX_NEW_TOKENS: "256"
+      REDIS_URL:          "redis://redis:6379"
+      LOG_JSON:           "1"
+      #HF_HUB_OFFLINE: "1"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── Stable Diffusion XL Turbo + ControlNet (optional) ──────────────────────
+  stable_diffusion:
+    #profiles: [stable_diffusion]
+    build:
+      context: .
+      dockerfile: stable_diffusion/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      SD_INTERVAL:          "45"
+      SD_PROMPT:            "2d cartoon style"
+      SD_NEGATIVE_PROMPT:   "blurry, bad anatomy, extra limbs, watermark"
+      SD_BACKEND: "lightning"
+      SD_WIDTH:             "1344"
+      SD_HEIGHT:            "768"
+      SD_SHOW_SIDE_BY_SIDE: "0"
+      SHOW_FPS:             "1"
+      REDIS_URL:            "redis://redis:6379"
+      LOG_JSON:             "1"
+      #HF_HUB_OFFLINE:       "1"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── API gateway ───────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      REDIS_URL:      "redis://redis:6379"
+      MJPEG_QUALITY:  "75"
+      LOG_JSON:       "1"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+networks:
+  gb10-vision:
+    driver: bridge
