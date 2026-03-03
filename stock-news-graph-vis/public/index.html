@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NASDAQ Tech Pulse — 3D Graph</title>
+
+  <!-- ── Import map: single shared Three.js instance ─────────────────────── -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://esm.sh/three@0.160.0",
+      "three/addons/": "https://esm.sh/three@0.160.0/examples/jsm/",
+      "3d-force-graph": "https://esm.sh/3d-force-graph@1.73.0",
+      "@tweenjs/tween.js": "https://esm.sh/@tweenjs/tween.js"
+    }
+  }
+  </script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --cyan:    #00d4ff;
+      --pink:    #ff2d78;
+      --purple:  #9b30ff;
+      --dim:     rgba(0, 0, 0, 0.72);
+      --border:  rgba(0, 212, 255, 0.25);
+      --font:    'Courier New', monospace;
+    }
+
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #000; }
+
+    #graph-container { position: fixed; inset: 0; }
+
+    /* ── Scanline overlay ───────────────────────────────────────────────── */
+    #scanlines {
+      position: fixed; inset: 0; z-index: 10; pointer-events: none;
+      background: repeating-linear-gradient(
+        180deg,
+        transparent 0px,
+        transparent 3px,
+        rgba(0,0,0, 0.08) 3px,
+        rgba(0,0,0, 0.08) 4px
+      );
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────────── */
+    #hud-header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 24px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.9) 0%, transparent 100%);
+      border-bottom: 1px solid var(--border);
+      font-family: var(--font);
+    }
+    #hud-title {
+      font-size: 1.25rem; font-weight: 700; letter-spacing: 0.18em;
+      color: var(--cyan);
+      text-shadow: 0 0 12px var(--cyan), 0 0 28px var(--cyan);
+    }
+    #hud-subtitle {
+      font-size: 0.65rem; letter-spacing: 0.14em; color: rgba(0,212,255,0.55);
+      margin-top: 2px;
+    }
+    #hud-stats {
+      font-size: 0.7rem; letter-spacing: 0.1em; color: rgba(255,255,255,0.5);
+      text-align: right;
+    }
+    #hud-stats span { color: var(--cyan); }
+
+    /* ── Ticker label overlay ───────────────────────────────────────────── */
+    .ticker-label {
+      position: absolute;
+      background: var(--dim);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 2px 6px;
+      font-family: var(--font);
+      font-size: 0.65rem;
+      color: rgba(255,255,255,0.9);
+      pointer-events: none;
+      white-space: nowrap;
+      transform: translate(-50%, -120%);
+    }
+
+    /* ── Legend ─────────────────────────────────────────────────────────── */
+    #legend {
+      position: fixed; bottom: 24px; left: 24px; z-index: 20;
+      font-family: var(--font); font-size: 0.66rem;
+      color: rgba(255,255,255,0.4);
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .leg-row { display: flex; align-items: center; gap: 8px; }
+    .leg-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      box-shadow: 0 0 6px currentColor;
+    }
+
+    /* ── Loader ─────────────────────────────────────────────────────────── */
+    #loader {
+      position: fixed; inset: 0; z-index: 50;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      background: #000;
+      font-family: var(--font);
+      transition: opacity .6s ease;
+    }
+    #loader.hidden { opacity: 0; pointer-events: none; }
+    #loader-error {
+      margin-top: 18px; max-width: 480px; padding: 10px 16px;
+      border: 1px solid var(--pink); border-radius: 3px;
+      color: var(--pink); font-size: 0.68rem; line-height: 1.6;
+      text-align: left; word-break: break-word; display: none;
+    }
+    #loader-text {
+      font-size: 0.8rem; letter-spacing: 0.2em; color: var(--cyan);
+      text-shadow: 0 0 16px var(--cyan);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    #loader-bar-wrap {
+      margin-top: 20px; width: 220px; height: 2px;
+      background: rgba(0,212,255,0.12); border-radius: 2px; overflow: hidden;
+    }
+    #loader-bar {
+      height: 100%; width: 0%;
+      background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+      transition: width .3s ease;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+    /* ── Controls hint ──────────────────────────────────────────────────── */
+    #controls-hint {
+      position: fixed; bottom: 24px; right: 24px; z-index: 20;
+      font-family: var(--font); font-size: 0.62rem;
+      color: rgba(255,255,255,0.25);
+      text-align: right; line-height: 1.8;
+    }
+    /* ── AI Summary panel ─────────────────────────────────────────── */
+    #summary-panel {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 40;
+      width: 380px;
+      background: rgba(4, 6, 14, 0.92);
+      border-left: 1px solid var(--border);
+      backdrop-filter: blur(18px);
+      font-family: var(--font);
+      display: flex; flex-direction: column;
+      transform: translateX(100%);
+      transition: transform .35s cubic-bezier(.4,0,.2,1);
+      overflow: hidden;
+    }
+    #summary-panel.open { transform: translateX(0); }
+
+    #summary-panel-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 64px 18px 14px;
+      border-bottom: 1px solid var(--border);
+      gap: 10px;
+    }
+    #summary-article-title {
+      font-size: 0.78rem; font-weight: 700; color: var(--cyan); line-height: 1.4;
+      text-shadow: 0 0 8px var(--cyan);
+      flex: 1;
+    }
+    #summary-close {
+      background: none; border: 1px solid var(--border); border-radius: 3px;
+      color: rgba(255,255,255,0.4); font-family: var(--font);
+      font-size: 0.65rem; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+      transition: border-color .15s, color .15s;
+    }
+    #summary-close:hover { border-color: var(--pink); color: var(--pink); }
+
+    #summary-meta {
+      padding: 8px 18px;
+      font-size: 0.62rem; color: rgba(255,255,255,0.3);
+      border-bottom: 1px solid var(--border);
+    }
+
+    #summary-body {
+      flex: 1; overflow-y: auto; padding: 16px 18px;
+      scrollbar-width: thin; scrollbar-color: rgba(0,212,255,.3) transparent;
+    }
+
+    #summary-status {
+      font-size: 0.65rem; letter-spacing: 0.12em;
+      color: rgba(0,212,255,0.5); margin-bottom: 12px;
+      min-height: 16px;
+    }
+    #summary-status.done { color: rgba(0,212,255,0.25); }
+    #summary-status.error { color: var(--pink); }
+
+    #summary-text {
+      font-size: 0.74rem; line-height: 1.75;
+      color: rgba(255,255,255,0.82);
+      min-height: 60px;
+      white-space: pre-wrap;
+    }
+
+    #summary-cursor {
+      display: inline-block; width: 7px; height: 0.85em;
+      background: var(--cyan); margin-left: 2px;
+      vertical-align: middle;
+      animation: blink .7s step-end infinite;
+    }
+    #summary-cursor.hidden { display: none; }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+    #summary-actions {
+      padding: 14px 18px;
+      border-top: 1px solid var(--border);
+      display: flex; gap: 10px;
+    }
+    .sum-btn {
+      flex: 1; padding: 9px 0;
+      background: none; border-radius: 3px;
+      font-family: var(--font); font-size: 0.67rem; letter-spacing: 0.1em;
+      cursor: pointer; transition: background .15s, color .15s, border-color .15s;
+    }
+    #btn-open {
+      border: 1px solid var(--cyan); color: var(--cyan);
+    }
+    #btn-open:hover { background: rgba(0,212,255,.12); }
+    #btn-copy {
+      border: 1px solid rgba(255,255,255,0.15); color: rgba(255,255,255,0.4);
+    }
+    #btn-copy:hover { border-color: var(--purple); color: var(--purple); }  </style>
+</head>
+<body>
+
+  <!-- Loader -->
+  <div id="loader">
+    <div id="loader-text">LOADING FEED ···</div>
+    <div id="loader-bar-wrap"><div id="loader-bar"></div></div>
+    <div id="loader-error"></div>
+  </div>
+
+  <!-- Scanlines -->
+  <div id="scanlines"></div>
+
+  <!-- Header HUD -->
+  <div id="hud-header">
+    <div>
+      <div id="hud-title">▸ NASDAQ TECH PULSE</div>
+      <div id="hud-subtitle">REAL-TIME TECHNOLOGY NEWS GRAPH</div>
+    </div>
+    <div id="hud-stats">
+      NODES <span id="stat-nodes">—</span> &nbsp;|&nbsp;
+      EDGES <span id="stat-links">—</span>
+    </div>
+  </div>
+
+  <!-- Legend -->
+  <div id="legend">
+    <div class="leg-row">
+      <div class="leg-dot" style="background:#ff2d78;color:#ff2d78"></div>
+      ARTICLE (sized by importance)
+    </div>
+    <div class="leg-row">
+      <div class="leg-dot" style="background:#00ffff;color:#00ffff;width:7px;height:7px"></div>
+      TICKER
+    </div>
+    <div class="leg-row">
+      <div class="leg-dot" style="background:#9b30ff;color:#9b30ff;width:6px;height:6px"></div>
+      DATA PARTICLE
+    </div>
+  </div>
+
+  <!-- Controls hint -->
+  <div id="controls-hint">
+    DRAG · ROTATE<br>
+    SCROLL · ZOOM<br>
+    CLICK · AI SUMMARY
+  </div>
+
+  <!-- AI Summary panel -->
+  <div id="summary-panel">
+    <div id="summary-panel-header">
+      <div id="summary-article-title"></div>
+      <button id="summary-close">× CLOSE</button>
+    </div>
+    <div id="summary-meta"></div>
+    <div id="summary-body">
+      <div id="summary-status">AWAITING SELECTION ···</div>
+      <div id="summary-text"><span id="summary-cursor" class="hidden"></span></div>
+    </div>
+    <div id="summary-actions">
+      <button class="sum-btn" id="btn-open">▸ OPEN ARTICLE</button>
+      <button class="sum-btn" id="btn-copy">COPY SUMMARY</button>
+    </div>
+  </div>
+
+  <!-- Graph container -->
+  <div id="graph-container"></div>
+
+  <!-- ── Main application ─────────────────────────────────────────────────── -->
+  <script type="module">
+    // ── Global error display helper (runs before any imports) ───────────────
+    function showLoaderError(msg) {
+      const loaderText = document.getElementById('loader-text');
+      const loaderErr  = document.getElementById('loader-error');
+      const loaderBar  = document.getElementById('loader-bar');
+      if (loaderText) loaderText.textContent = 'INITIALISATION ERROR';
+      if (loaderBar)  loaderBar.style.background = '#ff2d78';
+      if (loaderErr)  { loaderErr.style.display = 'block'; loaderErr.textContent = msg; }
+      console.error('[graph-vis] fatal:', msg);
+    }
+
+    // Catch errors that escape try/catch (e.g. in callbacks)
+    window.addEventListener('error', e => showLoaderError(e.message || String(e)));
+    window.addEventListener('unhandledrejection', e => showLoaderError(String(e.reason)));
+
+    try {
+
+    let ForceGraph3D, THREE, TWEEN;
+    try {
+      ({ default: ForceGraph3D } = await import('3d-force-graph'));
+      THREE = await import('three');
+      ({ default: TWEEN } = await import('@tweenjs/tween.js'));
+    } catch (e) {
+      showLoaderError('Failed to load core libraries: ' + e.message);
+      throw e;
+    }
+
+    // Post-processing removed: handled by graph library if needed
+
+    // ── DOM helpers ─────────────────────────────────────────────────────────
+    const $ = id => document.getElementById(id);
+    const loader     = $('loader');
+    const loaderBar  = $('loader-bar');
+
+    function setLoader(pct, label) {
+      loaderBar.style.width = pct + '%';
+      if (label) $('loader-text').textContent = label;
+    }
+
+    // ── Fetch graph data ─────────────────────────────────────────────────────
+    setLoader(10, 'FETCHING FEED ···');
+    let graph;
+    try {
+      graph = await fetch('/api/graph').then(r => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} from /api/graph`);
+        return r.json();
+      });
+    } catch (e) {
+      showLoaderError('/api/graph failed: ' + e.message);
+      throw e;
+    }
+    setLoader(50, 'BUILDING GRAPH ···');
+
+    $('stat-nodes').textContent  = graph.nodes.length;
+    $('stat-links').textContent  = graph.links.length;
+
+    const TICKER_COLOR = '#00ffff';  // cyan-turquoise for ticker nodes
+    const ARTICLE_COLOR = '#ff2d78'; // pink for articles
+
+    const SENTIMENT_SYMBOL = { positive: '▲', neutral: '●', negative: '▼' };
+    const SENTIMENT_COLOR  = { positive: '#00ff99', neutral: '#aaaaaa', negative: '#ff2d78' };
+    const STARS = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
+
+    function nodeColor(node) {
+      if (node.type === 'article')  return ARTICLE_COLOR;
+      if (node.type === 'ticker')   return TICKER_COLOR;
+      return '#334455';                                  // tags: dim
+    }
+
+    function nodeRadius(node) {
+      if (node.type === 'article')  return 2.5 + (node.importance || 3) * 1.2;
+      if (node.type === 'ticker')   return 2.5 + Math.min((node.connections || 1) * 0.8, 6);
+      return 1.8 + Math.min((node.connections || 1) * 0.6, 4);
+    }
+
+    // ── Particle state (per-link animated particles) ─────────────────────────
+    const PARTICLE_COUNT = 6;
+
+    function buildParticleObject() {
+      const geo  = new THREE.BufferGeometry();
+      const pos  = new Float32Array(PARTICLE_COUNT * 3);
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+
+      const mat = new THREE.PointsMaterial({
+        size: 2.2,
+        color: new THREE.Color('#9b30ff'),
+        transparent: true,
+        opacity: 0.9,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        sizeAttenuation: true,
+      });
+
+      const pts = new THREE.Points(geo, mat);
+
+      // Each particle has an offset t ∈ [0,1)
+      pts.userData.offsets = Array.from(
+        { length: PARTICLE_COUNT },
+        (_, i) => i / PARTICLE_COUNT
+      );
+
+      return pts;
+    }
+
+    // ── In-scene text label sprite helper ────────────────────────────────────
+    function makeLabelSprite(text) {
+      const W = 512, H = 128;
+      const canvas = document.createElement('canvas');
+      canvas.width  = W;
+      canvas.height = H;
+      const ctx = canvas.getContext('2d');
+
+      ctx.font = 'bold 46px sans-serif';
+      const tw  = ctx.measureText(text).width;
+      const pad = 18;
+
+      // pill background
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      const bx = W / 2 - tw / 2 - pad, bw = tw + pad * 2;
+      ctx.beginPath();
+      ctx.roundRect(bx, 22, bw, 76, 14);
+      ctx.fill();
+
+      // label text
+      ctx.fillStyle = '#ffffff';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, W / 2, 62);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      const mat = new THREE.SpriteMaterial({ map: tex, depthWrite: false, transparent: true });
+      const sprite = new THREE.Sprite(mat);
+      sprite.scale.set(24, 6, 1);   // world-unit size; tweak if needed
+      return sprite;
+    }
+
+    // ── Ticker highlight state (hoisted: referenced inside nodeThreeObject) ──
+    let highlightedTickerIds = new Set();
+    let focusedArticle = null;
+    let tickerLabelEls = {};
+    const tickerLabelContainer = document.createElement('div');
+    tickerLabelContainer.id = 'ticker-labels';
+    tickerLabelContainer.style.position = 'absolute';
+    tickerLabelContainer.style.inset = '0';
+    tickerLabelContainer.style.pointerEvents = 'none';
+    document.body.appendChild(tickerLabelContainer);
+
+    // ── Build the ForceGraph ─────────────────────────────────────────────────
+    setLoader(65, 'INITIALISING RENDERER ···');
+
+    const container = $('graph-container');
+
+    const Graph = ForceGraph3D({ antialias: true, alpha: false })(container)
+      .backgroundColor('#000000')
+      .graphData(graph)
+      .nodeLabel(() => '')                          // we roll our own tooltip
+      .nodeColor(nodeColor)
+      .nodeVal(nodeRadius)
+      .nodeOpacity(0.92)
+      .linkColor(() => 'rgba(0, 212, 255, 0.18)')
+      .linkWidth(0.6)
+      .linkDirectionalParticles(0)                  // disable built-in particles (we DIY)
+      // ── Custom link objects with flowing particles ─────────────────────
+      .linkThreeObjectExtend(true)
+      .linkThreeObject(() => buildParticleObject())
+      .linkPositionUpdate((pts, { start, end }) => {
+        if (!pts || !pts.userData.offsets) return;
+        const arr  = pts.geometry.attributes.position.array;
+        const offs = pts.userData.offsets;
+
+        const dx = end.x - start.x;
+        const dy = end.y - start.y;
+        const dz = end.z - start.z;
+
+        // Advance each particle along the link
+        const speed = 0.004;
+        for (let i = 0; i < PARTICLE_COUNT; i++) {
+          offs[i] = (offs[i] + speed) % 1;
+          const t = offs[i];
+          arr[i * 3]     = start.x + dx * t;
+          arr[i * 3 + 1] = start.y + dy * t;
+          arr[i * 3 + 2] = start.z + dz * t;
+        }
+        pts.geometry.attributes.position.needsUpdate = true;
+      })
+      // ── Interactions ──────────────────────────────────────────────────
+      .onNodeHover(() => {})
+      .onNodeClick(node => {
+        if (node?.type === 'article') openSummaryPanel(node);
+      })
+      // ── Node three-object: glowing sphere + in-scene label sprite ─────
+      .nodeThreeObject(node => {
+        const hex   = nodeColor(node);
+        const color = new THREE.Color(hex);
+        const r     = nodeRadius(node);
+
+        const geo = new THREE.SphereGeometry(r, 16, 12);
+        const mat = new THREE.MeshStandardMaterial({
+          color,
+          emissive: color,
+          emissiveIntensity: node.type === 'article' ? 1.4 : 0.6,
+          roughness: 0.15,
+          metalness: 0.25,
+        });
+        const mesh = new THREE.Mesh(geo, mat);
+
+        // Persistent 3-D label sprite (hidden until we choose to show it)
+        const sprite = makeLabelSprite(node.label || node.id || '');
+        // if this ticker is already marked for highlighting (due to focus), show it immediately
+        sprite.visible = (node.type === 'ticker' && highlightedTickerIds.has(node.id));
+        if (node.type === 'ticker' && highlightedTickerIds.has(node.id)) {
+          console.log('[graph-vis] ticker node created and auto-visible', node.id);
+          showTickerLabel(node.id, node.label);
+        }
+        sprite.position.set(0, r + 7, 0);
+        node.__labelSprite = sprite;
+
+        const group = new THREE.Group();
+        group.add(mesh);
+        group.add(sprite);
+        return group;
+      })
+      .nodeThreeObjectExtend(false);
+
+      // Disable graph's internal postProcessingComposer if present to avoid
+      // incompatible RenderPass/EffectComposer usage in this environment.
+      try {
+        if (typeof Graph.postProcessingComposer === 'function') {
+          Graph.postProcessingComposer = () => null;
+          console.log('[graph] postProcessingComposer disabled');
+        }
+      } catch (e) { /* ignore */ }
+
+    // ── Lighting ─────────────────────────────────────────────────────────────
+    // Only AmbientLight — adding PointLight caused three-render-objects' internal
+    // RenderPass to crash in setupLightsView before the light's matrixWorld was ready.
+    // Node materials use emissive so they glow regardless.
+    const scene = Graph.scene();
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+
+    // ── TWEEN animation loop (runs independently; graph drives its own render cycle) ──
+    function tweenLoop() {
+      TWEEN.update();
+      // also reposition any DOM labels every frame
+      updateTickerLabelPositions();
+      requestAnimationFrame(tweenLoop);
+    }
+    tweenLoop();
+
+    // ── Async incremental data load (prevents UI blocking on large graphs)
+    let targetGraph = graph; // full payload fetched earlier, may change on updates
+    const currentGraph = { nodes: [], links: [] };
+    Graph.graphData(currentGraph);
+
+    const NODE_BATCH = 10;
+    const LINK_BATCH = 30;
+    let ni = 0, li = 0;
+
+    function loadNodesBatch() {
+      const end = Math.min(ni + NODE_BATCH, targetGraph.nodes.length);
+      for (; ni < end; ni++) currentGraph.nodes.push(targetGraph.nodes[ni]);
+      Graph.graphData(currentGraph);
+      $('stat-nodes').textContent = currentGraph.nodes.length;
+      setLoader(Math.min(90, Math.round((currentGraph.nodes.length / Math.max(1, targetGraph.nodes.length)) * 80) + 10), 'LOADING NODES ···');
+      if (ni < targetGraph.nodes.length) {
+        setTimeout(loadNodesBatch, 30);
+      } else {
+        setTimeout(loadLinksBatch, 50);
+      }
+    }
+
+    function loadLinksBatch() {
+      const end = Math.min(li + LINK_BATCH, targetGraph.links.length);
+      // remember existing link count before adding
+      const prevCount = currentGraph.links.length;
+      for (; li < end; li++) {
+        const lk = targetGraph.links[li];
+        currentGraph.links.push(lk);
+        // if we have a focused article, check this link for tickers
+        if (focusedArticle) {
+          const toId = ptr => (ptr && typeof ptr === 'object' ? ptr.id : ptr);
+          const srcId = toId(lk.source);
+          const tgtId = toId(lk.target);
+          if (srcId === focusedArticle.id || tgtId === focusedArticle.id) {
+            const otherId = srcId === focusedArticle.id ? tgtId : srcId;
+            // mark in set so future ticker nodes (created later) will show
+            highlightedTickerIds.add(otherId);
+            const n = currentGraph.nodes.find(x => x.id === otherId && x.type === 'ticker');
+            if (n && n.__labelSprite) {
+              n.__labelSprite.visible = true;
+            }
+          }
+        }
+      }
+      Graph.graphData(currentGraph);
+      $('stat-links').textContent = currentGraph.links.length;
+      setLoader(95, 'LOADING LINKS ···');
+      if (li < targetGraph.links.length) {
+        setTimeout(loadLinksBatch, 30);
+      } else {
+        // Finished loading
+        setLoader(100, 'INITIALISED');
+
+        // after fully loaded we can zoom to fit once
+        try { Graph.zoomToFit(800, 40); } catch (e) { /* ignore */ }
+
+        setTimeout(() => loader.classList.add('hidden'), 500);
+      }
+    }
+
+    function startIncrementalLoad(newGraph) {
+      targetGraph = newGraph;
+      // reset state
+      ni = 0;
+      li = 0;
+      currentGraph.nodes = [];
+      currentGraph.links = [];
+      Graph.graphData(currentGraph);
+      setLoader(10, 'UPDATING GRAPH ···');
+      setTimeout(loadNodesBatch, 0);
+    }
+
+    // Start initial load
+    setTimeout(() => startIncrementalLoad(graph), 0);
+
+    // ── Live update stream (watch RSS feed) ─────────────────────────────
+    let lastFeedHash = null;
+    const evtSource = new EventSource('/api/graph/stream');
+    evtSource.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.feedHash === lastFeedHash) return; // duplicate
+        lastFeedHash = msg.feedHash;
+        const newGraph = msg.graph;
+        graph = newGraph;
+        startIncrementalLoad(newGraph);
+        console.log('[graph-vis] received updated graph from stream');
+      } catch (err) {
+        console.error('[graph-vis] stream parse error', err);
+      }
+    };
+
+    // ── Camera auto-fly-through ──────────────────────────────────────────────
+    let flyEnabled = true;
+    let flyTimeout = null;
+
+    // ── ticker highlighting helpers (DOM labels anchored to nodes) ──────────
+    function showTickerLabel(id, text) {
+      let el = tickerLabelEls[id];
+      if (!el) {
+        el = document.createElement('div');
+        el.className = 'ticker-label';
+        el.textContent = text || id;
+        tickerLabelContainer.appendChild(el);
+        tickerLabelEls[id] = el;
+      }
+      el.style.display = 'block';
+    }
+    function hideTickerLabel(id) {
+      const el = tickerLabelEls[id];
+      if (el) el.style.display = 'none';
+    }
+    function clearTickerLabels() {
+      Object.values(tickerLabelEls).forEach(el => el.remove());
+      tickerLabelEls = {};
+    }
+
+    // convert a node's 3d coordinates to screen pixels
+    function nodeToScreen(node) {
+      if (!node || node.x === undefined) return null;
+      const cam = Graph.camera();
+      const vec = new THREE.Vector3(node.x, node.y, node.z);
+      vec.project(cam);
+      return {
+        x: (vec.x * 0.5 + 0.5) * window.innerWidth,
+        y: (-vec.y * 0.5 + 0.5) * window.innerHeight,
+      };
+    }
+
+    function updateTickerLabelPositions() {
+      highlightedTickerIds.forEach(id => {
+        const node = currentGraph.nodes.find(n => n.id === id);
+        if (node) {
+          const pos = nodeToScreen(node);
+          const el = tickerLabelEls[id];
+          if (el && pos) {
+            el.style.transform = `translate(${pos.x}px,${pos.y}px)`;
+          }
+        }
+      });
+    }
+
+    function highlightTickersForArticle(articleNode) {
+      console.log('[graph-vis] highlightTickersForArticle called for', articleNode && articleNode.id);
+      // clear any previous highlights first, then set the new focused article
+      clearTickerHighlights();
+      focusedArticle = articleNode;
+      if (!articleNode) return;
+
+      const toId = ptr => (ptr && typeof ptr === 'object' ? ptr.id : ptr);
+      const ids = new Set();
+      currentGraph.links.forEach(l => {
+        const srcId = toId(l.source);
+        const tgtId = toId(l.target);
+        if (srcId === articleNode.id || tgtId === articleNode.id) {
+          const otherId = srcId === articleNode.id ? tgtId : srcId;
+          ids.add(otherId);
+        }
+      });
+
+      console.log('[graph-vis] ticker IDs connected to article', articleNode.id, Array.from(ids));
+      ids.forEach(id => {
+        const n = currentGraph.nodes.find(x => x.id === id && x.type === 'ticker');
+        if (n) {
+          console.log('[graph-vis] found ticker node in graph', id, 'label?', n.label, 'sprite?', !!n.__labelSprite);
+        } else {
+          console.log('[graph-vis] no ticker node currently in graph for', id);
+        }
+        if (n && n.__labelSprite) {
+          n.__labelSprite.visible = true;
+          highlightedTickerIds.add(id);
+        } else {
+          // still add to set so future nodes are shown
+          highlightedTickerIds.add(id);
+        }
+        // always show DOM label regardless of sprite state
+        showTickerLabel(id, n ? n.label : id);
+      });
+      console.log('[graph-vis] highlightedTickerIds now', Array.from(highlightedTickerIds));
+    }
+
+    function clearTickerHighlights(preserveFocus = false) {
+      highlightedTickerIds.forEach(id => {
+        const n = currentGraph.nodes.find(x => x.id === id);
+        if (n && n.__labelSprite) n.__labelSprite.visible = false;
+        hideTickerLabel(id);
+      });
+      highlightedTickerIds.clear();
+      clearTickerLabels();
+      if (!preserveFocus) focusedArticle = null;
+    }
+
+    function flyToRandom() {
+      if (!flyEnabled) return;
+
+      // only consider article nodes for auto‑fly
+      const nodes = currentGraph.nodes.filter(n => n.x !== undefined && n.type === 'article');
+      if (!nodes.length) { flyTimeout = setTimeout(flyToRandom, 2000); return; }
+
+      // simple uniform random pick among articles
+      const target = nodes[Math.floor(Math.random() * nodes.length)];
+      console.log('[graph-vis] flyToRandom targeting article', target && target.id);
+
+      const dist  = 120;
+      const ratio = 1 + dist / Math.hypot(target.x || 1, target.y || 1, target.z || 1);
+
+      Graph.cameraPosition(
+        { x: target.x * ratio, y: target.y * ratio, z: target.z * ratio },
+        target,
+        3500    // ms
+      );
+
+      // clear any existing labels
+      clearTickerHighlights();                      // remove prior ticker labels
+
+      // show tickers related to the new focus immediately
+      highlightTickersForArticle(target);
+
+      clearTimeout(flyTimeout);
+      setTimeout(() => openSummaryPanel(target), 1200);
+      // next fly scheduled in finishStream
+    }
+
+    // Start fly-through after the force simulation settles a bit
+    setTimeout(flyToRandom, 4000);
+
+    // Pause fly and auto-rotate when user interacts; resume after idle
+    let rotateResumeTimeout = null;
+    container.addEventListener('mousedown', () => {
+      flyEnabled = false;
+      clearTimeout(flyTimeout);
+      clearTickerHighlights();
+      const controls = Graph.controls();
+      if (controls) controls.autoRotate = false;
+      clearTimeout(rotateResumeTimeout);
+    });
+    container.addEventListener('mouseup', () => {
+      flyEnabled = true;
+      flyTimeout = setTimeout(flyToRandom, 8000);  // resume after 8s idle
+      const controls = Graph.controls();
+      rotateResumeTimeout = setTimeout(() => { if (controls) controls.autoRotate = true; }, 8000);
+    });
+
+    // ── Resize handling ──────────────────────────────────────────────────────
+    window.addEventListener('resize', () => {
+      Graph.width(window.innerWidth).height(window.innerHeight);
+    });
+
+    // ── AI Summary panel ──────────────────────────────────────────────────
+    const panel        = $('summary-panel');
+    const panelTitle   = $('summary-article-title');
+    const panelMeta    = $('summary-meta');
+    const panelStatus  = $('summary-status');
+    const panelText    = $('summary-text');
+    const panelCursor  = $('summary-cursor');
+    const btnOpen      = $('btn-open');
+    const btnCopy      = $('btn-copy');
+
+    let currentArticle = null;
+    let currentTickers = [];
+    let abortCtrl      = null;
+
+    $('summary-close').addEventListener('click', () => {
+      panel.classList.remove('open');
+      if (abortCtrl) abortCtrl.abort();
+      clearTickerHighlights();
+    });
+
+    btnOpen.addEventListener('click', () => {
+      if (currentArticle?.url) window.open(currentArticle.url, '_blank');
+    });
+
+    btnCopy.addEventListener('click', () => {
+      const text = panelText.textContent.replace(/\u00a0/g, ' ').trim();
+      if (text) navigator.clipboard.writeText(text).then(() => {
+        btnCopy.textContent = 'COPIED!';
+        setTimeout(() => { btnCopy.textContent = 'COPY SUMMARY'; }, 1800);
+      });
+    });
+
+    async function openSummaryPanel(node) {
+      // pause auto-fly while panel is shown
+      clearTimeout(flyTimeout);
+      if (abortCtrl) abortCtrl.abort();
+      abortCtrl = new AbortController();
+      currentArticle = node;
+      // highlight tickers related to this article as the panel opens
+      highlightTickersForArticle(node);
+
+      panelTitle.textContent = node.label || node.id;
+
+      currentTickers = [];
+      // Enrichment row
+      const sentColor = SENTIMENT_COLOR[node.sentiment] || '#aaa';
+      const sentSym   = SENTIMENT_SYMBOL[node.sentiment] || '●';
+      function renderMeta() {
+        let html =
+          `<span style="color:${sentColor}">${sentSym} ${node.sentiment || 'neutral'}</span>` +
+          `&nbsp;&nbsp;<span style="color:#ffd700;letter-spacing:2px">${STARS(node.importance || 3)}</span>` +
+          (node.pubDate
+            ? `<br>${new Date(node.pubDate).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}`
+            : '');
+        if (currentTickers.length) {
+          html += `<br>Tickers: ${currentTickers.join(', ')}`;
+        }
+        panelMeta.innerHTML = html;
+      }
+      renderMeta();
+
+      panelText.textContent   = '';
+      panelCursor.className   = '';       // show cursor
+      panelText.appendChild(panelCursor);
+      setStatus('SCRAPING ARTICLE ···', '');
+      panel.classList.add('open');
+
+      try {
+        const resp = await fetch('/api/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          signal: abortCtrl.signal,
+          body: JSON.stringify({ url: node.url, title: node.label }),
+        });
+
+        const reader  = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let   buf     = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split('\n');
+          buf = lines.pop(); // keep incomplete line
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+            const raw = trimmed.slice(5).trim();
+            if (raw === '[DONE]') { finishStream(); continue; }
+
+            let msg;
+            try { msg = JSON.parse(raw); } catch { continue; }
+
+            if (msg.status === 'scraping')      setStatus('SCRAPING ARTICLE ···', '');
+            if (msg.status === 'scrape_failed') setStatus(`SCRAPE PARTIAL: ${msg.detail || ''}`, '');
+            if (msg.status === 'summarizing')   setStatus('QWEN3 SUMMARIZING ···', '');
+            if (msg.tickers) {
+              currentTickers = msg.tickers;
+              renderMeta();
+            }
+            if (msg.delta)  appendToken(msg.delta);
+            if (msg.error)  setStatus(`ERROR: ${msg.error}`, 'error');
+          }
+        }
+        finishStream();
+
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          setStatus(`ERROR: ${err.message}`, 'error');
+          panelCursor.className = 'hidden';
+        }
+      }
+    }
+
+    function appendToken(token) {
+      // Insert text before the cursor span
+      panelText.insertBefore(document.createTextNode(token), panelCursor);
+      panelBody_scroll();
+    }
+
+    function finishStream() {
+      panelCursor.className = 'hidden';
+      setStatus('SUMMARY COMPLETE', 'done');
+      // once the summary is complete, resume fly-to-random after 30s
+      clearTimeout(flyTimeout);
+      flyTimeout = setTimeout(flyToRandom, 15000);
+    }
+
+    function setStatus(text, cls) {
+      panelStatus.textContent = text;
+      panelStatus.className   = cls || '';
+    }
+
+    function panelBody_scroll() {
+      const body = $('summary-body');
+      body.scrollTop = body.scrollHeight;
+    }
+
+    // ── All done ─────────────────────────────────────────────────────────────
+    setLoader(100, 'INITIALISED');
+    setTimeout(() => loader.classList.add('hidden'), 500);
+
+    console.log('[graph-vis] ready');
+
+    } catch (fatalErr) {
+      // showLoaderError already called above; just prevent unhandled rejection
+      console.error('[graph-vis] init failed:', fatalErr);
+    }
+  </script>
+</body>
+</html>

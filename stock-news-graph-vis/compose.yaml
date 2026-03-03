@@ -1,0 +1,55 @@
+services:
+  vllm-summarizer:
+    image: nvcr.io/nvidia/vllm:26.02-py3
+    container_name: vllm-summarizer
+    network_mode: "host"
+    ipc: host
+    ports:
+      - "8000:8000" # VLLM API access
+    ulimits:
+      memlock: -1
+      stack: 67108864 
+    volumes:
+      - ${HOME}/.cache/huggingface:/root/.cache/huggingface
+      - ${HOME}/gb10/models:/models
+    command: >
+     vllm serve Qwen/Qwen3-30B-A3B
+      --tensor-parallel-size 1 
+      --max-model-len 32768   
+      --gpu-memory-utilization 0.90 
+      --enable-prefix-caching 
+      --disable-log-requests 
+      --served-model-name Qwen3-30B-A3B
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+
+  # ── Graph Visualisation (3D force-graph + NASDAQ RSS) ────────────────────
+  graph-vis:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3500:3500"
+    environment:
+      PORT: "3500"
+      #TEST_MODE: "1"   # use embedded example feed instead of live RSS fetch; LLM enrichment still runs
+      VLLM_BASE_URL: "http://host.docker.internal:8000"
+      #VLLM_MODEL: "qwen3-32b-instruct-nvfp4"
+      VLLM_MODEL: Qwen3-30B-A3B
+      FINNHUB_API_KEY: ${FINNHUB_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # mount project sources for hot reload
+      - ./:/app:rw
+      # keep container node_modules to avoid host overwriting
+      - /app/node_modules
+    command: npm run dev
+    depends_on:
+      - vllm-summarizer
