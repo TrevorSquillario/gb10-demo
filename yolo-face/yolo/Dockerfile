@@ -17,7 +17,9 @@ WORKDIR /app
 COPY common/ /app/
 
 # Model weights
-COPY yolo/yolov12n-face.pt /app/models/yolov12n-face.pt
+COPY yolo/yolov12n-face.pt    /app/models/yolov12n-face.pt
+COPY yolo/yolo26n.pt          /app/models/yolo26n.pt
+COPY yolo/yolo26n-seg.pt      /app/models/yolo26n-seg.pt
 
 # Service source
 COPY yolo/src/ /app/

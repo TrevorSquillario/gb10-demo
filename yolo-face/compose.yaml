@@ -55,6 +55,37 @@ services:
       SHOW_STATS:   "1"
       REDIS_URL:    "redis://redis:6379"
       LOG_JSON:     "1"
+      BG_IMAGE_PATH: "/app/images/background01.jpg"
+    volumes:
+      - ~/gb10/images:/app/images
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  mask:
+    build:
+      context: .
+      dockerfile: mask/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      BG_IMAGE_PATH: "/app/images/background01.jpg"
+      REDIS_URL:     "redis://redis:6379"
+      LOG_JSON:      "1"
+    volumes:
+      - ~/gb10/images:/app/images
     deploy:
       resources:
         reservations:
@@ -117,6 +148,8 @@ services:
       SHOW_FPS:          "1"
       REDIS_URL:         "redis://redis:6379"
       LOG_JSON:          "1"
+      #LOG_LEVEL: "DEBUG"
+      DEPTH_CMAP: "magma_r"
     volumes:
       #- ~/gb10/models/comfyui/tensorrt/depth-anything:/app/models:ro
       - ~/.cache/huggingface:/root/.cache/huggingface
@@ -168,7 +201,6 @@ services:
       stack: 67108864
     environment:
       VLM_MODEL_ID:       "Qwen/Qwen2.5-VL-7B-Instruct"
-      VLM_PROMPT:         "Describe what you see in this image. Include detailed description of the people, their actions, and what they are wearing."
       VLM_INTERVAL:       "30"
       REDIS_URL:          "redis://redis:6379"
       LOG_JSON:           "1"
@@ -211,6 +243,40 @@ services:
       REDIS_URL:            "redis://redis:6379"
       LOG_JSON:             "1"
       #HF_HUB_OFFLINE:       "1"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+
+  # ── SAM2 person segmentation (optional — enable with: --profile sam2) ────
+  sam2:
+    profiles: [sam2]
+    build:
+      context: .
+      dockerfile: sam2/Dockerfile
+    restart: unless-stopped
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      SAM2_MODEL_ID:  "facebook/sam2.1-hiera-small"
+      MASK_MODE:      "colour"
+      MASK_ALPHA:     "0.6"
+      SKIP_FRAMES:    "1"
+      SHOW_FPS:       "1"
+      REDIS_URL:      "redis://redis:6379"
+      LOG_JSON:       "1"
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
     deploy:

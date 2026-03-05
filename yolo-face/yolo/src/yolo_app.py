@@ -53,6 +53,8 @@ torch.set_num_interop_threads(_CPU_THREADS)
 # ─────────────────────────────────────────────────────────────────────────────
 
 MODEL_PATH         = os.environ.get("MODEL_PATH", "/app/models/yolov12n-face.pt")
+PERSON_MODEL_PATH  = os.environ.get("PERSON_MODEL_PATH", "/app/models/yolo26n.pt")
+SEG_MODEL_PATH     = os.environ.get("SEG_MODEL_PATH", "/app/models/yolo26n-seg.pt")
 CONF               = float(os.environ.get("CONF", "0.3"))
 IOU                = float(os.environ.get("IOU", "0.3"))
 MAX_DET            = int(os.environ.get("MAX_DET", "50"))
@@ -77,20 +79,37 @@ def _fps_overlay(im: np.ndarray, fps: int) -> None:
     cv2.rectangle(im, (fx - 5, 25 - th - 5), (fx + tw + 5, 25 + bl), (255, 255, 255), -1)
     cv2.putText(im, text, (fx, 25), font, scale, (104, 31, 17), thick, cv2.LINE_AA)
 
+    font  = cv2.FONT_HERSHEY_SIMPLEX
+    scale, thick = 1.0, 2
+    (tw, th), bl = cv2.getTextSize(text, font, scale, thick)
+    h, w = im.shape[:2]
+    fx = w - tw - 15
+    cv2.rectangle(im, (fx - 5, 25 - th - 5), (fx + tw + 5, 25 + bl), (255, 255, 255), -1)
+    cv2.putText(im, text, (fx, 25), font, scale, (104, 31, 17), thick, cv2.LINE_AA)
+
 
 
 def main() -> None:
     USE_CUDA = torch.cuda.is_available()
     DEVICE   = "cuda:0" if USE_CUDA else "cpu"
 
-    log.info(f"[YOLO] Loading model from {MODEL_PATH} on {DEVICE}")
+    log.info(f"[YOLO] Loading face model from {MODEL_PATH} on {DEVICE}")
     model  = YOLO(MODEL_PATH)
     model.to(DEVICE)
+
+    log.info(f"[YOLO] Loading person detection model from {PERSON_MODEL_PATH} on {DEVICE}")
+    person_model = YOLO(PERSON_MODEL_PATH)
+    person_model.to(DEVICE)
+
+    log.info(f"[YOLO] Loading segmentation model from {SEG_MODEL_PATH} on {DEVICE}")
+    seg_model = YOLO(SEG_MODEL_PATH)
+    seg_model.to(DEVICE)
 
     bus = FrameBus()
     r   = bus.redis()
 
     log.info(f"[YOLO] Subscribing to frames:raw  (redis={REDIS_URL})")
+
 
     tracked_people: set[int] = set()
     current_people: set[int] = set()
@@ -104,7 +123,53 @@ def main() -> None:
         current_people = set()
         snapshot_detections: list[tuple] = []
 
-        # ── Inference ───────────────────────────────────────────────────────
+        # ── Person detection (yolo26n.pt) → frames:yolo_person ────────────
+        # person_results = person_model.track(
+        #     raw_frame,
+        #     conf=CONF,
+        #     iou=IOU,
+        #     max_det=MAX_DET,
+        #     device=DEVICE,
+        #     half=USE_CUDA,
+        #     classes=[0],  # person
+        #     tracker="botsort.yaml",
+        #     vid_stride=SKIP_FRAMES,
+        #     persist=True,
+        #     verbose=False,
+        # )
+        # bus.publish("yolo_person", person_results[0].plot(), meta={"frame": frame_counter})
+
+        # ── Person segmentation (yolo26n-seg.pt) → frames:yolo_seg ───────────
+        seg_results = seg_model.predict(
+            raw_frame,
+            conf=CONF,
+            iou=IOU,
+            max_det=MAX_DET,
+            device=DEVICE,
+            half=USE_CUDA,
+            classes=[0],  # person
+            retina_masks=True,
+            verbose=False,
+        )
+        # avoid bounding boxes on segmentation feed; keep mask overlay only
+        seg_frame = seg_results[0].plot(boxes=False)
+        if SHOW_FPS:
+            # use same fps_display calculated below on annotated frames
+            _fps_overlay(seg_frame, fps_display)
+        bus.publish("yolo_seg", seg_frame, meta={"frame": frame_counter})
+
+        # publish union mask (uint8) to mask stream for separate service
+        masks = seg_results[0].masks.data  # N,H,W
+        if masks is not None and masks.shape[0] > 0:
+            union = masks.max(dim=0)[0]  # H,W
+            # post-process: erode to tighten boundaries slightly
+            mask_uint8 = (union.float() * 255.0).to("cpu").numpy().astype("uint8")
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+            mask_uint8 = cv2.erode(mask_uint8, kernel, iterations=1)
+            # encode as frame so consumers can decode easily
+            bus.publish("yolo_seg_tensor", mask_uint8, meta={"frame": frame_counter})
+
+        # ── Face detection + tracking ────────────────────────────────────────
         results = model.track(
             raw_frame,
             conf=CONF,

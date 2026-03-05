@@ -438,6 +438,8 @@
             .gpu-widget { display: none; }
         }
     </style>
+    <!-- markdown parser for VLM output -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -447,7 +449,7 @@
             <span class="dot"></span>
             Dell Pro Max with GB10 Demo
         </div>
-        <span class="tracker-badge">YOLO-FACE · DeepFace · VLM · Depth Anything · DWpose</span>
+        <span class="tracker-badge">YOLO-FACE · DeepFace · VLM · SAM2 · DWpose</span>
         <div class="header-stats">
             <div class="stat-chip">
                 <span class="val" id="h-current">0</span>
@@ -500,11 +502,21 @@
                 <div class="quad" id="quad-vlm" style="align-items:flex-start; justify-content:flex-start; padding:14px 16px; background:var(--surface);">
                     <span class="quad-label">VLM</span>
                     <div style="display:flex; flex-direction:column; gap:8px; width:100%; height:100%; padding-top:28px;">
-                        <p id="vlm-text" style="color:var(--text); line-height:1.5; font-style:italic; overflow:hidden; flex:1;">Waiting for scene analysis…</p>
+                        <p id="vlm-text" style="color:var(--text); line-height:1.5; overflow:hidden; flex:1;">Waiting for scene analysis…</p>
                     </div>
                 </div>
 
-                <!-- Bottom-left: Depth Anything -->
+                <!-- Bottom-left: Person segmentation -->
+                <div class="quad" id="quad-seg">
+                    <span class="quad-label">Segmentation</span>
+                    <img id="seg-img" src="{{ url_for('seg_feed') }}" alt="Mask feed">
+                    <div class="quad-unavailable" id="seg-unavailable" style="display:none">
+                        <span class="icon">🪄</span>
+                        Segmentation service not enabled
+                    </div>
+                </div>
+                <!--
+                Bottom-left: Depth Anything (disabled — swap sam2 above back to this to re-enable)
                 <div class="quad" id="quad-depth">
                     <span class="quad-label">Depth Anything</span>
                     <img id="depth-img" src="{{ url_for('depth_feed') }}" alt="Depth feed"
@@ -514,10 +526,11 @@
                         Depth engine not loaded
                     </div>
                 </div>
+                -->
 
                 <!-- Bottom-right: DWpose -->
                 <div class="quad" id="quad-dwpose">
-                    <span class="quad-label">DWpose</span>
+                    <span class="quad-label">DWpose/Depth Anything</span>
                     <img id="dwpose-img" src="{{ url_for('dwpose_feed') }}" alt="DWpose feed"
                          onerror="document.getElementById('quad-dwpose').classList.add('dwpose-error')">
                     <div class="quad-unavailable" id="dwpose-unavailable" style="display:none">
@@ -558,14 +571,45 @@
     const knownIds = new Set();
 
     // ── Show unavailable overlay when a feed 404s/503s ───────────────────────
-    document.getElementById('depth-img').addEventListener('error', () => {
-        document.getElementById('depth-img').style.display = 'none';
-        document.getElementById('depth-unavailable').style.display = 'flex';
+    document.getElementById('seg-img').addEventListener('error', () => {
+        document.getElementById('seg-img').style.display = 'none';
+        document.getElementById('seg-unavailable').style.display = 'flex';
     });
     document.getElementById('dwpose-img').addEventListener('error', () => {
         document.getElementById('dwpose-img').style.display = 'none';
         document.getElementById('dwpose-unavailable').style.display = 'flex';
     });
+
+    // toggle segmentation/mask feed every 15s
+    (function toggleSeg() {
+        let showingMask = true;
+        setInterval(() => {
+            showingMask = !showingMask;
+            const img = document.getElementById('seg-img');
+            if (!img) return;
+            img.src = showingMask ?
+                "{{ url_for('seg_feed') }}" :
+                "{{ url_for('mask_feed') }}";
+        }, 15000);
+    })();
+
+    // toggle DWpose vs Depth feed every 15s
+    (function togglePoseDepth() {
+        let showingDw = true;
+        setInterval(() => {
+            showingDw = !showingDw;
+            const img = document.getElementById('dwpose-img');
+            if (!img) return;
+            img.src = showingDw ?
+                "{{ url_for('dwpose_feed') }}" :
+                "{{ url_for('depth_feed') }}";
+        }, 15000);
+    })();
+    // Depth Anything feed handler (disabled — restore with depth quad above)
+    // document.getElementById('depth-img').addEventListener('error', () => {
+    //     document.getElementById('depth-img').style.display = 'none';
+    //     document.getElementById('depth-unavailable').style.display = 'flex';
+    // });
 
     // ── Person card helpers ───────────────────────────────────────────────────
     function buildCard(id) {
@@ -788,7 +832,9 @@
                 const vData = await vRes.json();
                 const txt   = vData.description;
                 if (txt) {
-                    document.getElementById('vlm-text').textContent = txt;
+                    const vlmEl = document.getElementById('vlm-text');
+                    // convert markdown to HTML so that formatting is preserved
+                    vlmEl.innerHTML = marked.parse(txt);
                     fitVlmText();
                 }
             }

@@ -11,6 +11,11 @@ Routes
   GET  /dwpose_feed       MJPEG stream from frames:dwpose
   GET  /sd_feed           MJPEG stream from frames:sd
   GET  /depth_feed        MJPEG stream from frames:depth
+  GET  /sam2_feed         MJPEG stream from frames:sam2
+  GET  /person_feed       MJPEG stream from frames:yolo_person
+  GET  /seg_feed          MJPEG stream from frames:yolo_seg
+  GET  /mask_feed         MJPEG stream from frames:yolo_seg_bg (mask service output)
+  GET  /seg_bg_feed       Legacy alias for /mask_feed
   GET  /attributes        JSON — DeepFace attributes per track_id
   GET  /stats             JSON — current/total people from latest detections
   GET  /crop/<track_id>   JPEG — latest face thumbnail
@@ -103,6 +108,41 @@ def video_feed():
     )
 
 
+@app.route("/person_feed")
+def person_feed():
+    # Return 503 if no person-detection frames yet
+    frame, _ = bus.latest("yolo_person")
+    if frame is None:
+        return "Person detection service not running.", 503
+    return Response(
+        _mjpeg_stream("yolo_person"),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.route("/seg_feed")
+def seg_feed():
+    # Return 503 if no segmentation frames yet
+    frame, _ = bus.latest("yolo_seg")
+    if frame is None:
+        return "Segmentation service not running.", 503
+    return Response(
+        _mjpeg_stream("yolo_seg"),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
+
+
+@app.route("/mask_feed")
+def mask_feed():
+    # Return 503 if no mask-compositing frames yet
+    frame, _ = bus.latest("yolo_seg_bg")
+    if frame is None:
+        return "Mask service not running.", 503
+    return Response(
+        _mjpeg_stream("yolo_seg_bg"),
+        mimetype="multipart/x-mixed-replace; boundary=frame",
+    )
+
 @app.route("/dwpose_feed")
 def dwpose_feed():
     # Return 503 immediately if no dwpose frames are flowing
@@ -136,7 +176,6 @@ def depth_feed():
         _mjpeg_stream("depth"),
         mimetype="multipart/x-mixed-replace; boundary=frame",
     )
-
 
 @app.route("/attributes")
 def attributes():

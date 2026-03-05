@@ -3,4 +3,5 @@ numpy>=1.24.0
 redis>=5.0.0
 msgpack>=1.0.0
 huggingface_hub>=0.23.0
+pyvista[all]>=0.44.0
 # torch pre-installed in nvcr.io/nvidia/pytorch base image — do not add here.

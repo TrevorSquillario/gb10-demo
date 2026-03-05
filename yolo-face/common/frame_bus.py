@@ -39,11 +39,15 @@ _MAXLEN      = int(os.environ.get("FRAME_BUS_MAXLEN", "10"))
 _JPEG_QUALITY = int(os.environ.get("FRAME_JPEG_QUALITY", "75"))
 
 STREAMS: dict[str, str] = {
-    "raw":    "frames:raw",
-    "yolo":   "frames:yolo",
-    "dwpose": "frames:dwpose",
-    "depth":  "frames:depth",
-    "sd":     "frames:sd",
+    "raw":         "frames:raw",
+    "yolo":        "frames:yolo",
+    "yolo_person": "frames:yolo_person",
+    "yolo_seg":        "frames:yolo_seg",
+    "yolo_seg_tensor": "frames:yolo_seg_tensor",
+    "yolo_seg_bg":     "frames:yolo_seg_bg",
+    "dwpose":           "frames:dwpose",
+    "depth":       "frames:depth",
+    "sd":          "frames:sd",
 }
 
 VLM_KEY = "vlm:latest"

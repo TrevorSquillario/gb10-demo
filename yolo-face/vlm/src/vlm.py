@@ -13,7 +13,7 @@ Environment variables
   VLM_MODEL_ID        HuggingFace model ID.
                       Default: Qwen/Qwen2.5-VL-7B-Instruct
   VLM_PROMPT          Prompt sent with every frame.
-                      Default: "Describe what you see in this image."
+                      Default: "Provide a short description of the scene and overall mood, then list each person with a bullet point describing what they are wearing and what they are doing. Format the output in Markdown."
   VLM_INTERVAL        Seconds between inferences.  Default: 30
   VLM_MAX_NEW_TOKENS  Generation token budget.  Default: 256
   VLM_RESULT_TTL      Redis TTL for vlm:latest in seconds.  Default: 120
@@ -34,7 +34,12 @@ configure_logging()
 log = get_logger(__name__)
 
 VLM_MODEL_ID       = os.environ.get("VLM_MODEL_ID",      "Qwen/Qwen2.5-VL-7B-Instruct")
-VLM_PROMPT         = os.environ.get("VLM_PROMPT",        "Describe what you see in this image.")
+VLM_PROMPT         = os.environ.get(
+    "VLM_PROMPT",
+    "Provide a short description of the scene and overall mood, "
+    "then list each person with a bullet point describing what they are "
+    "wearing and what they are doing. Format the output in Markdown."
+)
 VLM_INTERVAL       = float(os.environ.get("VLM_INTERVAL",       "30"))
 VLM_MAX_NEW_TOKENS = int(os.environ.get("VLM_MAX_NEW_TOKENS", "1024"))
 VLM_RESULT_TTL     = int(os.environ.get("VLM_RESULT_TTL",     "120"))
