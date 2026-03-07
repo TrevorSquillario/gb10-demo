@@ -61,15 +61,15 @@ def _load_model():
         return _model, _processor
 
     import torch
-    from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
+    from transformers import Qwen3VLForConditionalGeneration, AutoProcessor
 
     log.info(f"[VLM] Loading {VLM_MODEL_ID} — this may take a while …")
     _processor = AutoProcessor.from_pretrained(VLM_MODEL_ID,
         min_pixels=VLM_MIN_PIXELS,
         max_pixels=VLM_MAX_PIXELS)
-    _model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+    _model = Qwen3VLForConditionalGeneration.from_pretrained(
         VLM_MODEL_ID,
-        dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        dtype="auto",
         device_map="auto",
     )
     _model.eval()
@@ -82,6 +82,7 @@ def _infer(frame_bgr: np.ndarray) -> str:
     try:
         from qwen_vl_utils import process_vision_info
     except ImportError:
+        log.warning("[VLM] process_vision_info failed to load.")
         process_vision_info = None
 
     model, processor = _load_model()

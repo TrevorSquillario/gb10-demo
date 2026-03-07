@@ -22,12 +22,13 @@ services:
       dockerfile: capture/Dockerfile
     restart: unless-stopped
     environment:
-      VIDEO_SOURCE: /videos/people2.mkv
+      #VIDEO_SOURCE: /videos/people2.mkv
+      VIDEO_SOURCE: 0 # Webcam at /dev/video0
       CAPTURE_FPS:       "30"
       REDIS_URL:         "redis://redis:6379"
       LOG_JSON:          "1"
-    #devices:
-    #  - /dev/video0:/dev/video0
+    devices:
+      - /dev/video0:/dev/video0
     volumes:
       - ~/gb10/videos:/videos
     depends_on:
@@ -200,7 +201,8 @@ services:
       memlock: -1
       stack: 67108864
     environment:
-      VLM_MODEL_ID:       "Qwen/Qwen2.5-VL-7B-Instruct"
+      #VLM_MODEL_ID:       "Qwen/Qwen2.5-VL-7B-Instruct"
+      VLM_MODEL_ID:       "Qwen/Qwen3-VL-8B-Instruct"
       VLM_INTERVAL:       "30"
       REDIS_URL:          "redis://redis:6379"
       LOG_JSON:           "1"

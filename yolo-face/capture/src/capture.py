@@ -87,6 +87,22 @@ def open_video_capture(
             cap = cv2.VideoCapture(video_source)
 
         if cap.isOpened():
+            # If we're opening a webcam, attempt to force a high-quality
+            # MJPG stream and a sensible resolution/fps.  This mirrors the
+            # advice in the user's repro example and helps avoid tiny
+            # default resolutions on USB webcams.
+            if video_source_type == "webcam":
+                try:
+                    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                except Exception:
+                    # some backends may reject the FOURCC but it won't hurt
+                    pass
+                # request fullHD and 30fps; drivers may ignore if unsupported
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+                cap.set(cv2.CAP_PROP_FPS, 30)
+
+            # re-query properties for logging after any adjustments
             width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             fps = cap.get(cv2.CAP_PROP_FPS)

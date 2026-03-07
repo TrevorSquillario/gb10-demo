@@ -159,7 +159,8 @@ def main() -> None:
         bus.publish("yolo_seg", seg_frame, meta={"frame": frame_counter})
 
         # publish union mask (uint8) to mask stream for separate service
-        masks = seg_results[0].masks.data  # N,H,W
+        seg_res = seg_results[0]
+        masks = seg_res.masks.data if getattr(seg_res, "masks", None) is not None else None
         if masks is not None and masks.shape[0] > 0:
             union = masks.max(dim=0)[0]  # H,W
             # post-process: erode to tighten boundaries slightly

@@ -37,12 +37,47 @@ POSE_ONNX = os.environ.get("ONNX_POSE_MODEL", "/app/models/dw-ll_ucoco_384.onnx"
 
 
 def _ensure_engines() -> None:
-    """Build TensorRT engines from ONNX if either engine file is missing."""
-    if os.path.isfile(TRT_DET_ENGINE) and os.path.isfile(TRT_POSE_ENGINE):
+    """Build TensorRT engines from ONNX if either engine file is missing or
+    incompatible with the current TRT runtime.
+
+    Engines are version‑specific; attempting to deserialize one built for a
+    different TensorRT release will raise an API usage error.  This helper
+    tries to load each engine and, if that fails, deletes it so the subsequent
+    build logic will recreate it.
+    """
+
+    def _engine_ok(path: str) -> bool:
+        # returns False if the file doesn't exist or fails to deserialize
+        if not os.path.isfile(path):
+            return False
+        try:
+            import tensorrt as trt
+
+            with open(path, "rb") as f:
+                runtime = trt.Runtime(trt.Logger())
+                engine = runtime.deserialize_cuda_engine(f.read())
+            return engine is not None
+        except Exception:  # pylint: disable=broad-except
+            return False
+
+    needs_rebuild = False
+
+    if not _engine_ok(TRT_DET_ENGINE):
+        if os.path.isfile(TRT_DET_ENGINE):
+            log.warning("[DWpose] det engine incompatible or corrupt, rebuilding")
+            os.remove(TRT_DET_ENGINE)
+        needs_rebuild = True
+
+    if not _engine_ok(TRT_POSE_ENGINE):
+        if os.path.isfile(TRT_POSE_ENGINE):
+            log.warning("[DWpose] pose engine incompatible or corrupt, rebuilding")
+            os.remove(TRT_POSE_ENGINE)
+        needs_rebuild = True
+
+    if not needs_rebuild:
         return
 
-    log.info("[DWpose] TRT engines missing — building from ONNX (this may take several minutes)...")
-
+    log.info("[DWpose] TRT engines missing or incompatible — building from ONNX (this may take several minutes)...")
     from export_trt import export_trt
 
     if not os.path.isfile(TRT_DET_ENGINE):
