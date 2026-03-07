@@ -90,6 +90,13 @@ def main() -> None:
             if w < MIN_CROP_PX or h < MIN_CROP_PX:
                 continue
 
+            # write a placeholder entry so the API/UI knows we're working on this
+            try:
+                r.hset(ATTRS_KEY, str(tid), json.dumps({"analyzing": True}))
+                r.expire(ATTRS_KEY, ATTRS_TTL)
+            except Exception:
+                pass
+
             try:
                 # ── Step 1: confidence pre-check ─────────────────────────────
                 faces = DeepFace.extract_faces(

@@ -13,7 +13,7 @@ Environment variables
   VLM_MODEL_ID        HuggingFace model ID.
                       Default: Qwen/Qwen2.5-VL-7B-Instruct
   VLM_PROMPT          Prompt sent with every frame.
-                      Default: "Provide a short description of the scene and overall mood, then list each person with a bullet point describing what they are wearing and what they are doing. Format the output in Markdown."
+                      Default: "Provide a short description of the scene and overall mood, then list each person with a bullet point describing what they are wearing and what they are doing. Use plain text with separate paragraphs; avoid unnecessary blank lines or trailing spaces."
   VLM_INTERVAL        Seconds between inferences.  Default: 30
   VLM_MAX_NEW_TOKENS  Generation token budget.  Default: 256
   VLM_RESULT_TTL      Redis TTL for vlm:latest in seconds.  Default: 120
@@ -38,7 +38,8 @@ VLM_PROMPT         = os.environ.get(
     "VLM_PROMPT",
     "Provide a short description of the scene and overall mood, "
     "then list each person with a bullet point describing what they are "
-    "wearing and what they are doing. Format the output in Markdown."
+    "wearing and what they are doing. Use plain text with separate "
+    "paragraphs; avoid unnecessary blank lines or trailing spaces."
 )
 VLM_INTERVAL       = float(os.environ.get("VLM_INTERVAL",       "30"))
 VLM_MAX_NEW_TOKENS = int(os.environ.get("VLM_MAX_NEW_TOKENS", "1024"))
@@ -129,7 +130,26 @@ def _infer(frame_bgr: np.ndarray) -> str:
     trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated_ids)]
     result = processor.batch_decode(trimmed, skip_special_tokens=True,
                                     clean_up_tokenization_spaces=False)
-    return result[0] if result else ""
+    text = result[0] if result else ""
+
+    # tidy up the generated markdown.  strip trailing spaces, then
+    # strip trailing whitespace, then collapse **all** consecutive blank
+    # lines to a *single* newline.  keeping a blank line still generates an
+    # empty <p> which browsers render as a full line even when margins are
+    # zero, so eliminating the blank line altogether is the cleanest fix.
+    #
+    # example before change:
+    #   line1
+    #   
+    #   line2
+    #
+    # after cleanup: "line1\nline2" (no empty paragraph at all)
+    import re
+    lines = [ln.rstrip() for ln in text.splitlines()]
+    cleaned = "\n".join(lines)
+    # collapse two or more newlines down to one
+    cleaned = re.sub(r"\n{2,}", "\n", cleaned)
+    return cleaned
 
 # ---------------------------------------------------------------------------
 # Main loop

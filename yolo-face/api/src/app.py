@@ -180,7 +180,13 @@ def depth_feed():
 @app.route("/attributes")
 def attributes():
     raw = r.hgetall("attrs")
-    return jsonify({int(k): json.loads(v) for k, v in raw.items()})
+    out = {}
+    for k, v in raw.items():
+        j = json.loads(v)
+        # Only show completed detections
+        if not j.get("analyzing"):
+            out[int(k)] = j
+    return jsonify(out)
 
 
 @app.route("/stats")

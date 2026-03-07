@@ -160,6 +160,10 @@
             word-break: break-word;
             /* colour and line-height inherited from inline style */
         }
+        /* since we no longer render markdown, the content is plain text
+           and we don't need special paragraph/list rules. keep overflow
+           and whitespace handling only. */
+        /* (existing rules remain above) */
 
         /* ── VLM banner ─────────────────────────── */
         .vlm-banner {
@@ -196,16 +200,23 @@
             position: fixed;
             bottom: 16px;
             right: 16px;
-            width: var(--panel-w);
+            width: auto;
             z-index: 1000;
             pointer-events: none;
+            display: flex;
+            flex-direction: column;  /* vertical stack */
+            align-items: flex-end;   /* keep cards right-aligned */
+            gap: 8px;
         }
         .person-overlay .person-card {
             pointer-events: auto;
+            width: 72px; /* match image width; overlay pill is inside */
+            /* allow cards to overlap slightly if needed */
         }
 
         /* ── Person card ────────────────────────── */
         .person-card {
+            display: block;
             flex-shrink: 0;
             background: var(--surface2);
             border: 1px solid var(--border);
@@ -223,10 +234,8 @@
         }
 
         .card-top {
-            display: flex;
-            gap: 10px;
-            padding: 10px;
-            align-items: flex-start;
+            display: block;
+            padding: 0;
         }
 
         .crop-wrap {
@@ -240,6 +249,21 @@
             align-items: center;
             justify-content: center;
             font-size: 1.6rem;
+        }
+        .emotion-pill {
+            position: absolute;
+            bottom: 4px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: .72rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent), var(--accent2));
+            color: white;
+            pointer-events: none;
+            white-space: nowrap;
         }
 
         .crop-wrap img {
@@ -260,17 +284,17 @@
             color: var(--text-muted);
         }
 
-        .card-info { flex: 1; min-width: 0; }
+        .card-info {
+            display: none; /* no longer used */
+        }
 
-        .card-id { font-size: .9rem; font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+        .card-id { display: none; }
 
-        .attr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 6px; }
+        .attr-grid { display: none; }
 
-        .attr-row .key  { color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; font-size: .62rem; }
-        .attr-row .val  { font-weight: 600; color: var(--text); font-size: .72rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .attr-row .key  { /* removed, no attributes */ }
+        .attr-row .val  { /* removed, no attributes */ }
 
-        .emotion-bar-wrap { padding: 0 10px 10px; }
-        .emotion-label    { font-size: .62rem; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 4px; }
         .emotion-pill     {
             display: inline-block;
             padding: 2px 10px;
@@ -406,8 +430,7 @@
             .gpu-widget { display: none; }
         }
     </style>
-    <!-- markdown parser for VLM output -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- markdown parser removed since we now display plain text -->
 </head>
 <body>
 <div class="app">
@@ -470,7 +493,7 @@
                 <div class="quad" id="quad-vlm" style="align-items:flex-start; justify-content:flex-start; padding:14px 16px; background:var(--surface);">
                     <span class="quad-label">VLM</span>
                     <div style="display:flex; flex-direction:column; gap:8px; width:100%; height:100%; padding-top:28px;">
-                        <p id="vlm-text" style="color:var(--text); line-height:1.5; overflow:auto; flex:1; white-space:pre-wrap; word-break:break-word;">Waiting for scene analysis…</p>
+                        <div id="vlm-text" style="color:var(--text); line-height:1.5; overflow:auto; flex:1; white-space:pre-wrap; word-break:break-word;">Waiting for scene analysis…</div>
                     </div>
                 </div>
 
@@ -533,6 +556,7 @@
 
     const cards = {};   // track_id -> { lastRefresh }
     const knownIds = new Set();
+    const overlayIds = new Set();   // ids currently shown in overlay
 
     // ── Show unavailable overlay when a feed 404s/503s ───────────────────────
     document.getElementById('seg-img').addEventListener('error', () => {
@@ -554,15 +578,32 @@
 
     // overlay helper for new-person notification
     function showPersonOverlay(id) {
+        // avoid duplicates
+        if (overlayIds.has(id)) return;
+        overlayIds.add(id);
+
         const overlay = document.getElementById('person-overlay');
         if (!overlay) return;
-        overlay.innerHTML = '';
-        overlay.appendChild(buildCard(id));
+
+        const card = buildCard(id);
+        overlay.appendChild(card);
         overlay.style.display = 'block';
+
+        // enforce maximum of 3 cards
+        while (overlay.children.length > 3) {
+            overlay.removeChild(overlay.firstElementChild);
+        }
+
+        // remove this card after a longer duration
         setTimeout(() => {
-            overlay.style.display = 'none';
-            overlay.innerHTML = '';
-        }, 5000);
+            if (card.parentElement === overlay) {
+                overlay.removeChild(card);
+            }
+            overlayIds.delete(id);
+            if (overlay.children.length === 0) {
+                overlay.style.display = 'none';
+            }
+        }, 10000);
     }
 
     // ── Person card helpers ───────────────────────────────────────────────────
@@ -571,54 +612,22 @@
         card.className = 'person-card';
         card.id = `card-${id}`;
         card.innerHTML = `
-            <div class="card-top">
-                <div class="crop-wrap">
-                    <span class="crop-fallback" id="crop-fb-${id}">👤</span>
-                    <img id="crop-${id}" alt="Person ${id}"
-                         onload="this.style.display='block'; document.getElementById('crop-fb-${id}').style.display='none'"
-                         onerror="this.style.display='none'; document.getElementById('crop-fb-${id}').style.display='flex'" />
-                </div>
-                <div class="card-info">
-                    <div class="card-id">Person ID ${id}</div>
-                    <div class="attr-grid" id="attrs-${id}">
-                        <div class="analyzing"><span class="spinner"></span> Analyzing…</div>
-                    </div>
-                </div>
-            </div>
-            <div class="emotion-bar-wrap" id="emotion-wrap-${id}" style="display:none">
-                <div class="emotion-label">Dominant Emotion</div>
-                <span class="emotion-pill" id="emotion-${id}"></span>
+            <div class="crop-wrap" id="crop-wrap-${id}">
+                <span class="crop-fallback" id="crop-fb-${id}">👤</span>
+                <img id="crop-${id}" alt="Person ${id}"
+                     onload="this.style.display='block'; document.getElementById('crop-fb-${id}').style.display='none'"
+                     onerror="this.style.display='none'; document.getElementById('crop-fb-${id}').style.display='flex'" />
+                <span class="emotion-pill" id="emotion-${id}">…</span>
             </div>`;
         return card;
     }
 
     function updateCard(id, attrs) {
-        const attrDiv = document.getElementById(`attrs-${id}`);
-        if (!attrDiv) return;
-        const age     = attrs.age     ?? '—';
-        const gender  = attrs.gender  ?? '—';
-        const race    = attrs.race    ?? '—';
         const emotion = attrs.emotion ?? '—';
-        const gEmoji  = GENDER_EMOJI[gender] || '';
-        attrDiv.innerHTML = `
-            <div class="attr-row">
-                <div class="key">Age</div>
-                <div class="val">${age}</div>
-            </div>
-            <div class="attr-row">
-                <div class="key">Gender</div>
-                <div class="val">${gEmoji} ${gender}</div>
-            </div>
-            <div class="attr-row">
-                <div class="key">Race</div>
-                <div class="val">${race}</div>
-            </div>`;
-        const emoWrap = document.getElementById(`emotion-wrap-${id}`);
         const emoEl   = document.getElementById(`emotion-${id}`);
-        if (emoWrap && emoEl) {
+        if (emoEl) {
             const emo = EMOTION_EMOJI[emotion?.toLowerCase()] || '🙂';
             emoEl.textContent = `${emo} ${emotion}`;
-            emoWrap.style.display = 'block';
         }
     }
 
@@ -756,20 +765,25 @@
             }
 
             if (aRes.ok) {
-                const attrs   = await aRes.json();
-                const attrIds = Object.keys(attrs).map(Number);
+                const attrs = await aRes.json();
+                const now   = Date.now();
 
-                for (const id of attrIds) {
+                for (const idStr of Object.keys(attrs)) {
+                    const id = Number(idStr);
+                    const a  = attrs[id];
+
                     if (!knownIds.has(id)) {
                         knownIds.add(id);
                         cards[id] = { lastRefresh: 0 };
+                    }
+
+                    // show overlay only when we have a real emotion (analysis done)
+                    if (a && a.emotion) {
                         showPersonOverlay(id);
                     }
-                }
 
-                const now = Date.now();
-                for (const id of attrIds) {
-                    updateCard(id, attrs[id]);
+                    updateCard(id, a);
+
                     if (cards[id] && now - cards[id].lastRefresh > 2000) {
                         refreshCrop(id);
                         cards[id].lastRefresh = now;
@@ -781,9 +795,11 @@
                 const vData = await vRes.json();
                 const txt   = vData.description;
                 if (txt) {
+                    // cleanup whitespace and collapse consecutive blank lines;
+                    // output is plain text, no markdown parsing needed.
+                    let cleaned = txt.trim().replace(/\n{2,}/g, "\n\n");
                     const vlmEl = document.getElementById('vlm-text');
-                    // convert markdown to HTML so that formatting is preserved
-                    vlmEl.innerHTML = marked.parse(txt);
+                    vlmEl.textContent = cleaned;
                     fitVlmText();
                 }
             }
