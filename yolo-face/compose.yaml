@@ -39,6 +39,7 @@ services:
 
   # ── YOLO face detection + tracking ───────────────────────────────────────
   yolo:
+    profiles: [yolo]
     build:
       context: .
       dockerfile: yolo/Dockerfile
@@ -73,6 +74,7 @@ services:
       - gb10-vision
 
   mask:
+    profiles: [mask]
     build:
       context: .
       dockerfile: mask/Dockerfile
@@ -102,7 +104,7 @@ services:
 
   # ── DWpose skeleton detection (optional — enable with: --profile dwpose) ─
   dwpose: 
-    #profiles: [dwpose]
+    profiles: [dwpose]
     build:
       context: .
       dockerfile: dwpose/Dockerfile
@@ -134,7 +136,7 @@ services:
 
   # ── Depth Anything TRT (optional — enable with: --profile depth) ─────────
   depth:
-    #profiles: [depth]
+    profiles: [depth]
     build:
       context: .
       dockerfile: depth/Dockerfile
@@ -169,7 +171,7 @@ services:
 
   # ── DeepFace (optional — enable with: --profile deepface) ────────────────
   deepface:
-    #profiles: [deepface]
+    profiles: [deepface]
     build:
       context: .
       dockerfile: deepface/Dockerfile
@@ -191,7 +193,7 @@ services:
 
   # ── VLM (optional — enable with: --profile vlm) ───────────────────────────
   vlm:
-    #profiles: [vlm]
+    profiles: [vlm]
     build:
       context: .
       dockerfile: vlm/Dockerfile
@@ -224,30 +226,30 @@ services:
       - gb10-vision
 
   # ── Stable Diffusion XL Turbo + ControlNet (optional) ──────────────────────
-  stable_diffusion:
-    profiles: [stable_diffusion]
+  stablediffusion:
+    profiles: [stablediffusion]
     build:
       context: .
-      dockerfile: stable_diffusion/Dockerfile
+      dockerfile: stablediffusion/Dockerfile
     restart: unless-stopped
     ipc: host
     ulimits:
       memlock: -1
       stack: 67108864
     environment:
-      SD_INTERVAL:          "45"
-      SD_PROMPT:            "2d cartoon style"
-      SD_NEGATIVE_PROMPT:   "blurry, bad anatomy, extra limbs, watermark"
-      SD_BACKEND: "lightning"
+      SD_PROMPT:            "A delicate, glowing tracing of a standing person, iridescent neon light, floating on a pitch-black void, cinematic lighting, dramatic contrast, spiritual energy, photorealistic light Bloom, exquisite detail."
+      SD_NEGATIVE_PROMPT:   "background elements, scenery, buildings, text, watermark, blurry, noise, background light, low quality"
       SD_WIDTH:             "1344"
       SD_HEIGHT:            "768"
       SD_SHOW_SIDE_BY_SIDE: "0"
       SHOW_FPS:             "1"
       REDIS_URL:            "redis://redis:6379"
       LOG_JSON:             "1"
+      LOG_LEVEL:            "DEBUG"
       #HF_HUB_OFFLINE:       "1"
     volumes:
       - ~/.cache/huggingface:/root/.cache/huggingface
+      - ~/.cache/torch_cache:/tmp/torchinductor_root
     deploy:
       resources:
         reservations:
@@ -260,6 +262,38 @@ services:
         condition: service_healthy
     networks:
       - gb10-vision
+
+  streamdiffusion:
+    #profiles: [streamdiffusion]
+    build: 
+      context: .
+      dockerfile: streamdiffusion/Dockerfile
+    container_name: streamdiffusion
+    environment:
+      SD_PROMPT: "macro photography, bioluminescent mushrooms, glowing fungi forest, gnome and fairies walking about, neon cyan and magenta color palette, intricate gill detail, spotted mushroom caps, ethereal glow, dark alien terrain, gnarled roots, magical atmosphere"
+      SD_NEGATIVE_PROMPT: "watermark, text, signature, blurry, low resolution, distorted, grainy, bright daylight, sun, human, animal, boring colors, flat lighting"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ~/gb10/models/tensorrt/streamdiffusion:/app/models
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - gb10-vision
+    #command:  ["/usr/bin/tail", "-f", "/dev/null"]
+    #command:  ["python3", "streamdiffusion_txt2img.py"]
 
   # ── SAM2 person segmentation (optional — enable with: --profile sam2) ────
   sam2:

@@ -33,6 +33,9 @@ import msgpack
 import numpy as np
 import cv2
 from redis import Redis
+import logging
+
+_log = logging.getLogger(__name__)
 
 REDIS_URL    = os.environ.get("REDIS_URL", "redis://redis:6379")
 _MAXLEN      = int(os.environ.get("FRAME_BUS_MAXLEN", "10"))
@@ -103,7 +106,8 @@ class FrameBus:
         }
         if meta:
             payload[b"meta"] = msgpack.dumps(meta)
-        self._r.xadd(key, payload, maxlen=_MAXLEN, approximate=True)
+        entry_id = self._r.xadd(key, payload, maxlen=_MAXLEN, approximate=True)
+        _log.debug(f"[FrameBus] published to {key} id={entry_id} len={_MAXLEN}")
 
     # ------------------------------------------------------------------ read
 

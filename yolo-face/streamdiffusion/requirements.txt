@@ -1,0 +1,15 @@
+opencv-python-headless>=4.7.0
+polygraphy
+diffusers
+transformers
+accelerate
+fire
+omegaconf
+cuda-python==13.0.1
+# Included in container base image
+#onnx
+onnxruntime
+#protobuf
+onnx_graphsurgeon
+colored
+redis>=5.0.0

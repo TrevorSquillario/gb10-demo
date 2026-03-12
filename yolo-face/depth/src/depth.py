@@ -21,6 +21,7 @@ import time
 import cv2
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from logging_config import configure_logging, get_logger
 from frame_bus import FrameBus
@@ -47,37 +48,55 @@ _HF_REPO = {
 }
 
 
-class DepthAnythingV2Wrapper:
-    """Depth Anything V2 inference wrapper."""
+# Target Output resolution
+OUT_W, OUT_H = 1280, 720
 
-    def __init__(self, encoder: str = "vitl"):
+class DepthAnythingV2Wrapper:
+    def __init__(self, encoder: str = "vits"):
         from depth_anything_v2.dpt import DepthAnythingV2
         from huggingface_hub import hf_hub_download
 
-        if encoder not in _MODEL_CONFIGS:
-            raise ValueError(f"Unknown encoder '{encoder}'. Choose from: {list(_MODEL_CONFIGS)}")
-
-        log.info(f"[Depth] Loading Depth Anything V2 model: {encoder}")
+        log.info(f"[Depth] Loading model: {encoder} in FP16 mode")
         model = DepthAnythingV2(**_MODEL_CONFIGS[encoder])
-        ckpt = hf_hub_download(
-            repo_id=_HF_REPO[encoder],
-            filename=f"depth_anything_v2_{encoder}.pth",
-        )
+        ckpt = hf_hub_download(repo_id=_HF_REPO[encoder], filename=f"depth_anything_v2_{encoder}.pth")
+        
+        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.load_state_dict(torch.load(ckpt, map_location="cpu"))
-        self._model = model.to("cuda").eval()
-        log.info("[Depth] Model ready")
+        self._model = model.to(self._device).half().eval()
+        
+        # Pre-calculated normalization values
+        self.mean = torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1).to(self._device).half()
+        self.std = torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1).to(self._device).half()
 
+        # Calculate inference size maintaining 16:9 aspect ratio
+        # Must be multiples of 14. 518/14 = 37. 
+        # For 16:9, we'll use 518 wide and 294 high (21*14).
+        self.inf_w, self.inf_h = 518, 294 
+
+    @torch.no_grad()
     def __call__(self, frame_bgr: np.ndarray, grayscale: bool = False) -> np.ndarray:
-        depth = self._model.infer_image(frame_bgr)  # HxW float32
-        depth_min, depth_max = depth.min(), depth.max()
-        if depth_max > depth_min:
-            depth = ((depth - depth_min) / (depth_max - depth_min) * 255).astype(np.uint8)
-        else:
-            depth = np.zeros_like(depth, dtype=np.uint8)
-        if grayscale:
-            return cv2.cvtColor(depth, cv2.COLOR_GRAY2BGR)
-        return cv2.applyColorMap(depth, cv2.COLORMAP_INFERNO)
+        # Resize to maintain 16:9 aspect ratio at inference
+        image = cv2.resize(frame_bgr, (self.inf_w, self.inf_h))
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) / 255.0
+        
+        # Prepare Tensor (FP16)
+        tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).to(self._device).half()
+        tensor = (tensor - self.mean) / self.std
 
+        # Inference
+        depth = self._model(tensor)
+        
+        # Resize to 720p output resolution
+        depth = F.interpolate(depth[:, None], (OUT_H, OUT_W), mode="bilinear", align_corners=True)[0, 0]
+        
+        # Normalization
+        depth_min, depth_max = depth.min(), depth.max()
+        depth = (depth - depth_min) / (depth_max - depth_min) * 255.0
+        depth_np = depth.cpu().numpy().astype(np.uint8)
+
+        if grayscale:
+            return cv2.cvtColor(depth_np, cv2.COLOR_GRAY2BGR)
+        return cv2.applyColorMap(depth_np, cv2.COLORMAP_INFERNO)
 
 def _fps_overlay(im: np.ndarray, fps: int) -> None:
     text  = f"FPS: {fps}"
