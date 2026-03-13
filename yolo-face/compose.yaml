@@ -39,7 +39,7 @@ services:
 
   # ── YOLO face detection + tracking ───────────────────────────────────────
   yolo:
-    profiles: [yolo]
+    #profiles: [yolo]
     build:
       context: .
       dockerfile: yolo/Dockerfile
@@ -74,7 +74,7 @@ services:
       - gb10-vision
 
   mask:
-    profiles: [mask]
+    #profiles: [mask]
     build:
       context: .
       dockerfile: mask/Dockerfile
@@ -104,7 +104,7 @@ services:
 
   # ── DWpose skeleton detection (optional — enable with: --profile dwpose) ─
   dwpose: 
-    profiles: [dwpose]
+    #profiles: [dwpose]
     build:
       context: .
       dockerfile: dwpose/Dockerfile
@@ -136,7 +136,7 @@ services:
 
   # ── Depth Anything TRT (optional — enable with: --profile depth) ─────────
   depth:
-    profiles: [depth]
+    #profiles: [depth]
     build:
       context: .
       dockerfile: depth/Dockerfile
@@ -171,7 +171,7 @@ services:
 
   # ── DeepFace (optional — enable with: --profile deepface) ────────────────
   deepface:
-    profiles: [deepface]
+    #profiles: [deepface]
     build:
       context: .
       dockerfile: deepface/Dockerfile
@@ -193,7 +193,7 @@ services:
 
   # ── VLM (optional — enable with: --profile vlm) ───────────────────────────
   vlm:
-    profiles: [vlm]
+    #profiles: [vlm]
     build:
       context: .
       dockerfile: vlm/Dockerfile
@@ -264,7 +264,7 @@ services:
       - gb10-vision
 
   streamdiffusion:
-    #profiles: [streamdiffusion]
+    profiles: [streamdiffusion]
     build: 
       context: .
       dockerfile: streamdiffusion/Dockerfile
